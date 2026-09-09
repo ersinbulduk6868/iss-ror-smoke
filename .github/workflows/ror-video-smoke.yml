@@ -58,12 +58,11 @@ jobs:
           echo "ROR_BIN=$ROR_BIN" >> "$GITHUB_ENV"
           echo "ROR_DIR=$(dirname "$ROR_BIN")" >> "$GITHUB_ENV"
 
-      - name: Verify RoR binary starts
+      - name: Verify RoR runtime dependencies
         shell: bash
         run: |
           set -euxo pipefail
           cd "$ROR_DIR"
-          "$ROR_BIN" --version 2>&1 | tee "$RUNNER_TEMP/ror-version.log" || true
           file "$ROR_BIN"
           ldd "$ROR_BIN" | tee "$RUNNER_TEMP/ror-ldd.log" || true
           if ldd "$ROR_BIN" 2>/dev/null | grep -q 'not found'; then
@@ -86,12 +85,12 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p artifacts
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
 
           ffmpeg -hide_banner -loglevel warning -y \
             -f x11grab -video_size 1280x720 -framerate 30 -i :99.0 \
             -t 18 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
-            artifacts/ror-video-smoke.mp4 \
+            "$GITHUB_WORKSPACE/artifacts/ror-video-smoke.mp4" \
             >"$RUNNER_TEMP/ffmpeg.out" 2>"$RUNNER_TEMP/ffmpeg.err" &
           FFMPEG_PID=$!
 
@@ -117,25 +116,32 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          test -s artifacts/ror-video-smoke.mp4
+          VIDEO='artifacts/ror-video-smoke.mp4'
+          test -s "$VIDEO"
 
           ffprobe -v error \
             -select_streams v:0 \
             -show_entries stream=codec_name,width,height,avg_frame_rate,nb_frames \
             -show_entries format=duration,size \
             -of default=noprint_wrappers=1 \
-            artifacts/ror-video-smoke.mp4 | tee artifacts/ffprobe.txt
+            "$VIDEO" | tee artifacts/ffprobe.txt
 
-          DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 artifacts/ror-video-smoke.mp4)"
-          python3 - <<'PY'
-          import os
-          d = float(os.environ['DURATION'])
+          DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$VIDEO")"
+          python3 - "$DURATION" <<'PY'
+          import sys
+          d = float(sys.argv[1])
           if d < 12.0:
               raise SystemExit(f'Captured video is too short: {d:.3f}s')
           print(f'Captured video duration PASS: {d:.3f}s')
           PY
-        env:
-          DURATION: ${{ env.DURATION }}
+
+          # A video file alone is not enough: reject a completely black capture.
+          BLACK_LOG="$(ffmpeg -hide_banner -i "$VIDEO" -vf 'blackdetect=d=10:pix_th=0.05' -an -f null - 2>&1 || true)"
+          printf '%s\n' "$BLACK_LOG" | tee artifacts/blackdetect.txt
+          if printf '%s\n' "$BLACK_LOG" | grep -Eq 'black_duration:(1[2-9]|[2-9][0-9])'; then
+            echo 'Captured video appears effectively black for the smoke-test window.' >&2
+            exit 1
+          fi
 
       - name: Collect diagnostics
         if: always()
@@ -144,7 +150,6 @@ jobs:
           set +e
           mkdir -p artifacts/logs
           for f in \
-            "$RUNNER_TEMP/ror-version.log" \
             "$RUNNER_TEMP/ror-ldd.log" \
             "$RUNNER_TEMP/glxinfo.log" \
             "$RUNNER_TEMP/xvfb.log" \
