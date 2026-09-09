@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p "$RUNNER_TEMP/ror"
+          mkdir -p "$RUNNER_TEMP/ror" "$GITHUB_WORKSPACE/artifacts/logs"
           curl -fL --retry 5 --retry-delay 3 \
             "$ROR_ZIP_URL" \
             -o "$RUNNER_TEMP/ror.zip"
@@ -57,16 +57,41 @@ jobs:
           chmod +x "$ROR_BIN"
           echo "ROR_BIN=$ROR_BIN" >> "$GITHUB_ENV"
           echo "ROR_DIR=$(dirname "$ROR_BIN")" >> "$GITHUB_ENV"
+          find "$RUNNER_TEMP/ror" -maxdepth 3 -type f | sort \
+            > "$GITHUB_WORKSPACE/artifacts/logs/ror-package-files.txt"
+
+      - name: Discover bundled RoR shared libraries
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/artifacts/logs"
+
+          find "$RUNNER_TEMP/ror" \( -type f -o -type l \) -name '*.so*' -print | sort \
+            | tee "$GITHUB_WORKSPACE/artifacts/logs/ror-shared-libraries.txt"
+
+          mapfile -t LIB_DIRS < <(
+            find "$RUNNER_TEMP/ror" \( -type f -o -type l \) -name '*.so*' -printf '%h\n' \
+              | sort -u
+          )
+
+          if (( ${#LIB_DIRS[@]} == 0 )); then
+            echo 'No bundled shared-library directories were found in the RoR package.' >&2
+            exit 1
+          fi
+
+          ROR_LIB_PATH="$(IFS=:; echo "${LIB_DIRS[*]}")"
+          echo "ROR_LIB_PATH=$ROR_LIB_PATH" | tee "$GITHUB_WORKSPACE/artifacts/logs/ror-library-path.txt"
+          echo "LD_LIBRARY_PATH=$ROR_LIB_PATH" >> "$GITHUB_ENV"
 
       - name: Verify RoR runtime dependencies
         shell: bash
         run: |
           set -euxo pipefail
           cd "$ROR_DIR"
-          file "$ROR_BIN"
-          ldd "$ROR_BIN" | tee "$RUNNER_TEMP/ror-ldd.log" || true
+          file "$ROR_BIN" | tee "$GITHUB_WORKSPACE/artifacts/logs/ror-file.txt"
+          ldd "$ROR_BIN" | tee "$RUNNER_TEMP/ror-ldd.log" "$GITHUB_WORKSPACE/artifacts/logs/ror-ldd.log" || true
           if ldd "$ROR_BIN" 2>/dev/null | grep -q 'not found'; then
-            echo 'One or more required shared libraries are missing.' >&2
+            echo 'One or more required shared libraries are still missing after adding the portable package library paths.' >&2
             exit 1
           fi
 
@@ -79,7 +104,7 @@ jobs:
           echo "XVFB_PID=$!" >> "$GITHUB_ENV"
           sleep 2
           xdpyinfo -display :99 >/dev/null
-          glxinfo -B | tee "$RUNNER_TEMP/glxinfo.log"
+          glxinfo -B | tee "$RUNNER_TEMP/glxinfo.log" "$GITHUB_WORKSPACE/artifacts/logs/glxinfo.log"
 
       - name: Launch RoR and record rendered frames
         shell: bash
@@ -135,7 +160,6 @@ jobs:
           print(f'Captured video duration PASS: {d:.3f}s')
           PY
 
-          # A video file alone is not enough: reject a completely black capture.
           BLACK_LOG="$(ffmpeg -hide_banner -i "$VIDEO" -vf 'blackdetect=d=10:pix_th=0.05' -an -f null - 2>&1 || true)"
           printf '%s\n' "$BLACK_LOG" | tee artifacts/blackdetect.txt
           if printf '%s\n' "$BLACK_LOG" | grep -Eq 'black_duration:(1[2-9]|[2-9][0-9])'; then
@@ -156,8 +180,11 @@ jobs:
             "$RUNNER_TEMP/ror-runtime.log" \
             "$RUNNER_TEMP/ffmpeg.out" \
             "$RUNNER_TEMP/ffmpeg.err"; do
-            [[ -f "$f" ]] && cp "$f" artifacts/logs/
+            if [[ -f "$f" ]]; then
+              cp "$f" artifacts/logs/
+            fi
           done
+          true
 
       - name: Upload smoke evidence
         if: always()
