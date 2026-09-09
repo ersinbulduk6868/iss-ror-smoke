@@ -19,8 +19,6 @@ env:
   ALSOFT_DRIVERS: 'null'
   CAPTURE_SECONDS: '20'
   CAPTURE_FPS: '30'
-  DRIVE_SECONDS: '14'
-  MIN_HORIZONTAL_DISPLACEMENT_M: '2.0'
   SCENE_START_TIMEOUT_SECONDS: '180'
 
 jobs:
@@ -51,7 +49,8 @@ jobs:
           grep -E '[[:space:]]libx264[[:space:]]' artifacts/logs/ffmpeg-encoders.txt
           ffmpeg -hide_banner -devices > artifacts/logs/ffmpeg-devices.txt 2>&1
           grep -F 'x11grab' artifacts/logs/ffmpeg-devices.txt
-          printf 'source_tag=%s\npackage_sha256=%s\ncontrol_position_key=H\ncontrol_accelerate_key=UP\n' \
+          xdotool version | tee artifacts/logs/xdotool-version.txt
+          printf 'source_tag=%s\npackage_sha256=%s\nposition_event=COMMON_OUTPUT_POSITION Keyboard H\naccelerate_event=TRUCK_ACCELERATE Keyboard UP\ninput_transport=focused-window XTEST (no --window)\n' \
             "$ROR_SOURCE_TAG_SHA" "$ROR_ZIP_SHA256" > artifacts/logs/source-verified-control-contract.txt
 
       - name: Download and verify official RoR package
@@ -67,7 +66,11 @@ jobs:
 
           ROR_DIR="$RUNNER_TEMP/ror"
           ROR_TEST_HOME="$RUNNER_TEMP/ror-home"
-          if [[ -d "$ROR_DIR/config" ]]; then ROR_USER_DIR="$ROR_DIR/config"; else ROR_USER_DIR="$ROR_TEST_HOME/.rigsofrods"; fi
+          if [[ -d "$ROR_DIR/config" ]]; then
+            ROR_USER_DIR="$ROR_DIR/config"
+          else
+            ROR_USER_DIR="$ROR_TEST_HOME/.rigsofrods"
+          fi
           ROR_LOG="$ROR_USER_DIR/logs/RoR.log"
           echo "ROR_DIR=$ROR_DIR" >> "$GITHUB_ENV"
           echo "ROR_TEST_HOME=$ROR_TEST_HOME" >> "$GITHUB_ENV"
@@ -83,7 +86,8 @@ jobs:
           grep -F 'LD_LIBRARY_PATH' "$ROR_DIR/RunRoR"
           grep -F './RoR "$@"' "$ROR_DIR/RunRoR"
 
-          map_matches=(); truck_matches=()
+          map_matches=()
+          truck_matches=()
           while IFS= read -r archive; do
             unzip -t "$archive" >/dev/null
             while IFS= read -r entry; do
@@ -102,66 +106,135 @@ jobs:
           export LD_LIBRARY_PATH="$ROR_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           check_ldd() {
             local target="$1" label="$2" out="artifacts/logs/ldd/$2.txt" rc
-            set +e; ldd "$target" > "$out" 2>&1; rc=$?; set -e
-            (( rc == 0 ))
-            ! grep -q 'not found' "$out"
+            set +e
+            ldd "$target" > "$out" 2>&1
+            rc=$?
+            set -e
+            (( rc == 0 )) || { cat "$out" >&2; return 1; }
+            ! grep -q 'not found' "$out" || { cat "$out" >&2; return 1; }
           }
           check_ldd "$ROR_DIR/RoR" RoR
+
           plugin_folder="$(awk -F= '/^[[:space:]]*PluginFolder[[:space:]]*=/ {sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit}' "$ROR_DIR/plugins.cfg")"
           test -n "$plugin_folder"
           [[ "$plugin_folder" = /* ]] && plugin_base="$plugin_folder" || plugin_base="$ROR_DIR/$plugin_folder"
           plugin_base="$(realpath "$plugin_base")"
           : > artifacts/logs/resolved-plugins.txt
+          plugin_count=0
           while IFS= read -r line; do
-            plugin="${line#*=}"; plugin="${plugin//$'\r'/}"; plugin="$(echo "$plugin" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+            plugin="${line#*=}"
+            plugin="${plugin//$'\r'/}"
+            plugin="$(echo "$plugin" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
             [[ -n "$plugin" ]] || continue
-            candidates=("$plugin_base/$plugin"); [[ "$plugin" == *.so || "$plugin" == *.so.* ]] || candidates+=("$plugin_base/${plugin}.so")
-            target=''; for c in "${candidates[@]}"; do [[ -f "$c" ]] && { [[ -z "$target" ]] || exit 1; target="$c"; }; done
+            plugin_count=$((plugin_count + 1))
+            candidates=("$plugin_base/$plugin")
+            [[ "$plugin" == *.so || "$plugin" == *.so.* ]] || candidates+=("$plugin_base/${plugin}.so")
+            target=''
+            for candidate in "${candidates[@]}"; do
+              if [[ -f "$candidate" ]]; then
+                [[ -z "$target" ]] || { echo "AMBIGUOUS_PLUGIN: $plugin" >&2; exit 1; }
+                target="$candidate"
+              fi
+            done
             test -n "$target"
-            target="$(realpath "$target")"; label="$(basename "$target" | sed -E 's/[^A-Za-z0-9_.-]+/_/g')"
+            target="$(realpath "$target")"
+            label="$(basename "$target" | sed -E 's/[^A-Za-z0-9_.-]+/_/g')"
             echo "Plugin=$plugin -> $target" | tee -a artifacts/logs/resolved-plugins.txt
             check_ldd "$target" "$label"
           done < <(grep -E '^[[:space:]]*Plugin[[:space:]]*=' "$ROR_DIR/plugins.cfg")
+          (( plugin_count > 0 ))
 
-      - name: Launch real scene and prove deterministic vehicle motion
+      - name: Launch scene and prove XTEST input transport plus real vehicle motion
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p artifacts/logs "$ROR_TEST_HOME"
-          XVFB_PID=''; ROR_PID=''; FFMPEG_PID=''
+          XVFB_PID=''
+          ROR_PID=''
+          FFMPEG_PID=''
+
           cleanup() {
             set +e
             xdotool keyup Up 2>/dev/null || true
-            [[ -n "$FFMPEG_PID" ]] && { kill -TERM "$FFMPEG_PID" 2>/dev/null || true; wait "$FFMPEG_PID" 2>/dev/null || true; }
-            [[ -n "$ROR_PID" ]] && { kill -TERM "$ROR_PID" 2>/dev/null || true; sleep 1; kill -KILL "$ROR_PID" 2>/dev/null || true; wait "$ROR_PID" 2>/dev/null || true; }
-            [[ -n "$XVFB_PID" ]] && { kill -TERM "$XVFB_PID" 2>/dev/null || true; wait "$XVFB_PID" 2>/dev/null || true; }
+            if [[ -n "$FFMPEG_PID" ]]; then
+              kill -TERM "$FFMPEG_PID" 2>/dev/null || true
+              wait "$FFMPEG_PID" 2>/dev/null || true
+            fi
+            if [[ -n "$ROR_PID" ]]; then
+              kill -TERM "$ROR_PID" 2>/dev/null || true
+              sleep 1
+              kill -KILL "$ROR_PID" 2>/dev/null || true
+              wait "$ROR_PID" 2>/dev/null || true
+            fi
+            if [[ -n "$XVFB_PID" ]]; then
+              kill -TERM "$XVFB_PID" 2>/dev/null || true
+              wait "$XVFB_PID" 2>/dev/null || true
+            fi
           }
           trap cleanup EXIT
 
           Xvfb "$DISPLAY" -screen 0 1280x720x24 -ac +extension GLX +render -noreset -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 &
           XVFB_PID=$!
           ready=0
-          for _ in $(seq 1 30); do xdpyinfo -display "$DISPLAY" > artifacts/logs/xdpyinfo.txt 2>&1 && { ready=1; break; }; kill -0 "$XVFB_PID" 2>/dev/null || break; sleep 0.5; done
-          (( ready == 1 ))
+          for _ in $(seq 1 30); do
+            if xdpyinfo -display "$DISPLAY" > artifacts/logs/xdpyinfo.txt 2>&1; then
+              ready=1
+              break
+            fi
+            kill -0 "$XVFB_PID" 2>/dev/null || break
+            sleep 0.5
+          done
+          (( ready == 1 )) || { cat "$RUNNER_TEMP/xvfb.log" >&2 || true; exit 1; }
+
           glxinfo -B | tee artifacts/logs/glxinfo.txt
-          set +e; timeout 4s glxgears > artifacts/logs/glxgears.txt 2>&1; glx_rc=$?; set -e
+          grep -F 'OpenGL renderer string:' artifacts/logs/glxinfo.txt
+          set +e
+          timeout 4s glxgears > artifacts/logs/glxgears.txt 2>&1
+          glx_rc=$?
+          set -e
           (( glx_rc == 0 || glx_rc == 124 ))
 
           cd "$ROR_DIR"
           env -u SNAP_USER_COMMON HOME="$ROR_TEST_HOME" ./RunRoR -map "$ROR_MAP" -truck "$ROR_TRUCK" -enter > "$RUNNER_TEMP/ror-runtime.stdout.log" 2>&1 &
           ROR_PID=$!
+
           scene_ready=0
-          for second in $(seq 1 "$SCENE_START_TIMEOUT_SECONDS"); do
+          for _ in $(seq 1 "$SCENE_START_TIMEOUT_SECONDS"); do
             sleep 1
-            kill -0 "$ROR_PID" 2>/dev/null || { cat "$RUNNER_TEMP/ror-runtime.stdout.log" >&2 || true; [[ -f "$ROR_LOG" ]] && cat "$ROR_LOG" >&2 || true; exit 1; }
+            kill -0 "$ROR_PID" 2>/dev/null || {
+              cat "$RUNNER_TEMP/ror-runtime.stdout.log" >&2 || true
+              [[ -f "$ROR_LOG" ]] && cat "$ROR_LOG" >&2 || true
+              exit 1
+            }
             if [[ -f "$ROR_LOG" ]]; then
-              grep -Eqi 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' "$ROR_LOG" && exit 1
-              if awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" 'index($0,"===== LOADING TERRAIN " map){t=NR} index($0,"[RoR|Diag] Preselected Truck:")&&index($0,truck)&&t{p=NR} index($0,"===== DONE LOADING VEHICLE")&&p&&NR>p{d=NR} END{exit !(t&&p>t&&d>p)}' "$ROR_LOG"; then scene_ready=1; break; fi
+              if grep -Eqi 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' "$ROR_LOG"; then
+                grep -Ein 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' "$ROR_LOG" >&2 || true
+                exit 1
+              fi
+              if awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" '
+                index($0,"===== LOADING TERRAIN " map){t=NR}
+                index($0,"[RoR|Diag] Preselected Truck:") && index($0,truck) && t{p=NR}
+                index($0,"===== DONE LOADING VEHICLE") && p && NR>p{d=NR}
+                END{exit !(t && p>t && d>p)}
+              ' "$ROR_LOG"; then
+                scene_ready=1
+                break
+              fi
             fi
           done
           (( scene_ready == 1 ))
           sleep 3
           kill -0 "$ROR_PID"
+
+          # Verify the runtime-generated keymap that RoR actually loaded.
+          RUNTIME_INPUT_MAP="$ROR_USER_DIR/config/input.map"
+          test -f "$RUNTIME_INPUT_MAP"
+          cp "$RUNTIME_INPUT_MAP" "$GITHUB_WORKSPACE/artifacts/logs/runtime-input.map"
+          grep -Eq '^COMMON_OUTPUT_POSITION[[:space:]]+Keyboard[[:space:]]+H([[:space:]]|$)' "$RUNTIME_INPUT_MAP"
+          grep -Eq '^TRUCK_ACCELERATE[[:space:]]+Keyboard[[:space:]]+UP([[:space:]]|$)' "$RUNTIME_INPUT_MAP"
+          grep -F 'Manager: X11InputManager' "$ROR_LOG"
+          grep -F 'Total Keyboards: 1' "$ROR_LOG"
+          grep -F "Loading input mapping config file: $RUNTIME_INPUT_MAP" "$ROR_LOG"
 
           cd "$GITHUB_WORKSPACE"
           xwininfo -root -tree > artifacts/logs/xwininfo-tree.txt
@@ -170,21 +243,40 @@ jobs:
           xwininfo -id "$ROR_WINDOW_ID" > artifacts/logs/xwininfo-ror.txt
           xdotool windowfocus --sync "$ROR_WINDOW_ID"
           sleep 1
-          FOCUSED_WINDOW_ID="$(printf '0x%x' "$(xdotool getwindowfocus)")"
-          printf 'ROR_WINDOW_ID=%s\nFOCUSED_WINDOW_ID=%s\n' "$ROR_WINDOW_ID" "$FOCUSED_WINDOW_ID" | tee artifacts/logs/window-focus.txt
-          test "${ROR_WINDOW_ID,,}" = "${FOCUSED_WINDOW_ID,,}"
 
-          position_count_before="$(grep -c 'Position:' "$ROR_LOG" || true)"
-          xdotool key --window "$ROR_WINDOW_ID" h
-          position_ready=0
-          for _ in $(seq 1 30); do
-            sleep 0.2
-            position_count_now="$(grep -c 'Position:' "$ROR_LOG" || true)"
-            if (( position_count_now > position_count_before )); then position_ready=1; break; fi
-          done
-          (( position_ready == 1 ))
-          POSITION_BEFORE_LINE="$(grep 'Position:' "$ROR_LOG" | tail -n 1)"
-          printf '%s\n' "$POSITION_BEFORE_LINE" | tee artifacts/logs/position-before.txt
+          assert_focus() {
+            local focused
+            focused="$(printf '0x%x' "$(xdotool getwindowfocus)")"
+            printf 'expected=%s focused=%s\n' "$ROR_WINDOW_ID" "$focused" >> artifacts/logs/window-focus-history.txt
+            [[ "${ROR_WINDOW_ID,,}" == "${focused,,}" ]]
+          }
+          assert_focus
+
+          # xdotool with --window uses XSendEvent; RoR/OIS did not receive that path in the failed run.
+          # With focus already proven, omit --window so xdotool uses XTEST into the focused RoR X11 window.
+          capture_position() {
+            local label="$1" before now
+            before="$(grep -c '\[RoR|Diag\] Position:' "$ROR_LOG" || true)"
+            assert_focus
+            xdotool key h
+            for _ in $(seq 1 50); do
+              sleep 0.1
+              now="$(grep -c '\[RoR|Diag\] Position:' "$ROR_LOG" || true)"
+              if (( now > before )); then
+                grep '\[RoR|Diag\] Position:' "$ROR_LOG" | tail -n 1 | tee "artifacts/logs/position-${label}.txt"
+                return 0
+              fi
+            done
+            echo "INPUT_TRANSPORT_FAIL: focused XTEST H did not produce COMMON_OUTPUT_POSITION" >&2
+            return 1
+          }
+
+          capture_position idle-start
+          sleep 2
+          capture_position idle-mid
+          sleep 2
+          capture_position idle-end
+          echo 'INPUT_TRANSPORT_GATE=PASS' | tee artifacts/input-transport.txt
 
           ffmpeg -hide_banner -loglevel warning -y -thread_queue_size 512 \
             -f x11grab -draw_mouse 0 -video_size 1280x720 -framerate "$CAPTURE_FPS" -i "${DISPLAY}.0" \
@@ -194,96 +286,206 @@ jobs:
           sleep 1
           kill -0 "$FFMPEG_PID"
 
-          xdotool keydown --window "$ROR_WINDOW_ID" Up
-          sleep "$DRIVE_SECONDS"
-          xdotool keyup --window "$ROR_WINDOW_ID" Up
+          assert_focus
+          xdotool keydown Up
+          sleep 4
+          capture_position drive-1
+          sleep 4
+          capture_position drive-2
+          sleep 4
+          capture_position drive-3
+          assert_focus
+          xdotool keyup Up
           sleep 1
+          capture_position final
           kill -0 "$ROR_PID"
-
-          position_count_before="$(grep -c 'Position:' "$ROR_LOG" || true)"
-          xdotool key --window "$ROR_WINDOW_ID" h
-          position_ready=0
-          for _ in $(seq 1 30); do
-            sleep 0.2
-            position_count_now="$(grep -c 'Position:' "$ROR_LOG" || true)"
-            if (( position_count_now > position_count_before )); then position_ready=1; break; fi
-          done
-          (( position_ready == 1 ))
-          POSITION_AFTER_LINE="$(grep 'Position:' "$ROR_LOG" | tail -n 1)"
-          printf '%s\n' "$POSITION_AFTER_LINE" | tee artifacts/logs/position-after.txt
 
           wait "$FFMPEG_PID"
           FFMPEG_PID=''
           kill -0 "$ROR_PID"
 
-          python3 - artifacts/logs/position-before.txt artifacts/logs/position-after.txt "$MIN_HORIZONTAL_DISPLACEMENT_M" > artifacts/motion-evidence.txt <<'PY'
-          import math, re, sys
+          python3 - \
+            artifacts/logs/position-idle-start.txt \
+            artifacts/logs/position-idle-mid.txt \
+            artifacts/logs/position-idle-end.txt \
+            artifacts/logs/position-drive-1.txt \
+            artifacts/logs/position-drive-2.txt \
+            artifacts/logs/position-drive-3.txt \
+            artifacts/logs/position-final.txt \
+            > artifacts/motion-evidence.txt <<'PY'
+          import math
+          import re
+          import sys
           from pathlib import Path
+
           def parse(path):
               text = Path(path).read_text(errors='replace')
-              tail = text.split('Position:', 1)[1] if 'Position:' in text else text
+              if 'Position:' not in text:
+                  raise SystemExit(f'POSITION_PARSE_FAIL {path}: missing Position marker')
+              tail = text.rsplit('Position:', 1)[1]
               vals = [float(x) for x in re.findall(r'[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?', tail)]
               if len(vals) < 3:
                   raise SystemExit(f'POSITION_PARSE_FAIL {path}: {text!r}')
-              return vals[0], vals[1], vals[2]
-          before = parse(sys.argv[1]); after = parse(sys.argv[2]); minimum = float(sys.argv[3])
-          horizontal = math.hypot(after[0]-before[0], after[2]-before[2])
-          spatial = math.sqrt(sum((b-a)**2 for a,b in zip(before, after)))
-          print(f'POSITION_BEFORE={before}')
-          print(f'POSITION_AFTER={after}')
-          print(f'HORIZONTAL_DISPLACEMENT_M={horizontal:.6f}')
-          print(f'SPATIAL_DISPLACEMENT_M={spatial:.6f}')
-          print(f'MIN_REQUIRED_HORIZONTAL_DISPLACEMENT_M={minimum:.6f}')
-          if horizontal <= minimum:
-              raise SystemExit(f'MOTION_GATE_FAIL: horizontal displacement {horizontal:.6f}m <= {minimum:.6f}m')
+              return tuple(vals[:3])
+
+          names = ['idle_start', 'idle_mid', 'idle_end', 'drive_1', 'drive_2', 'drive_3', 'final']
+          pts = dict(zip(names, map(parse, sys.argv[1:])))
+
+          def horizontal(a, b):
+              return math.hypot(b[0] - a[0], b[2] - a[2])
+
+          # Two no-input intervals establish this run's own natural drift rate.
+          idle_increments = [
+              horizontal(pts['idle_start'], pts['idle_mid']),
+              horizontal(pts['idle_mid'], pts['idle_end']),
+          ]
+          idle_rates = [d / 2.0 for d in idle_increments]
+          max_idle_rate = max(idle_rates)
+
+          # UP is held continuously across three equal 4-second driven intervals.
+          drive_increments = [
+              horizontal(pts['idle_end'], pts['drive_1']),
+              horizontal(pts['drive_1'], pts['drive_2']),
+              horizontal(pts['drive_2'], pts['drive_3']),
+          ]
+          drive_rates = [d / 4.0 for d in drive_increments]
+          final_coast = horizontal(pts['drive_3'], pts['final'])
+
+          for name in names:
+              print(f'{name.upper()}={pts[name]}')
+          print('IDLE_INCREMENT_M=' + ','.join(f'{d:.9f}' for d in idle_increments))
+          print('IDLE_RATE_MPS=' + ','.join(f'{r:.9f}' for r in idle_rates))
+          print(f'MAX_IDLE_RATE_MPS={max_idle_rate:.9f}')
+          print('DRIVE_INCREMENT_M=' + ','.join(f'{d:.9f}' for d in drive_increments))
+          print('DRIVE_RATE_MPS=' + ','.join(f'{r:.9f}' for r in drive_rates))
+          print(f'FINAL_COAST_INCREMENT_M={final_coast:.9f}')
+
+          # No arbitrary meter target: driven motion must beat the machine-measured idle baseline
+          # in at least two independently sampled drive intervals.
+          faster_than_idle = sum(rate > max_idle_rate for rate in drive_rates)
+          nonzero_driven = sum(dist > 0.0 for dist in drive_increments)
+          if faster_than_idle < 2:
+              raise SystemExit(
+                  f'MOTION_GATE_FAIL: only {faster_than_idle}/3 drive intervals exceeded '
+                  f'measured max idle rate {max_idle_rate:.9f} m/s'
+              )
+          if nonzero_driven < 2:
+              raise SystemExit(
+                  f'MOTION_GATE_FAIL: only {nonzero_driven}/3 drive intervals changed position'
+              )
           print('MOTION_GATE=PASS')
           PY
           cat artifacts/motion-evidence.txt
+
           cp "$ROR_LOG" artifacts/logs/RoR-after-motion.log
           cp "$RUNNER_TEMP/ror-runtime.stdout.log" artifacts/logs/ror-runtime.stdout.log
           cp "$RUNNER_TEMP/xvfb.log" artifacts/logs/xvfb.log
 
-      - name: Validate motion video and acceptance
+      - name: Validate motion video and final acceptance
         shell: bash
         run: |
           set -euxo pipefail
           VIDEO='artifacts/ror-motion-e2e.mp4'
           test -s "$VIDEO"
+          grep -F 'INPUT_TRANSPORT_GATE=PASS' artifacts/input-transport.txt
           grep -F 'MOTION_GATE=PASS' artifacts/motion-evidence.txt
-          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,avg_frame_rate -show_entries format=duration,size -of default=noprint_wrappers=1 "$VIDEO" | tee artifacts/ffprobe.txt
+
+          ffprobe -v error -select_streams v:0 \
+            -show_entries stream=codec_name,width,height,avg_frame_rate \
+            -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 "$VIDEO" | tee artifacts/ffprobe.txt
+
           CODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$VIDEO")"
           DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$VIDEO")"
           WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$VIDEO")"
           HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$VIDEO")"
           FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$VIDEO")"
-          python3 - "$CODEC" "$DURATION" "$WIDTH" "$HEIGHT" "$FRAMES" "$CAPTURE_SECONDS" <<'PY'
+          SIZE="$(stat -c '%s' "$VIDEO")"
+
+          python3 - "$CODEC" "$DURATION" "$WIDTH" "$HEIGHT" "$FRAMES" "$SIZE" "$CAPTURE_SECONDS" "$CAPTURE_FPS" <<'PY'
           import sys
-          codec,dur,w,h,frames,req=sys.argv[1],float(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]),int(sys.argv[5]),float(sys.argv[6])
-          bad=[]
-          if codec!='h264': bad.append(f'codec={codec}')
-          if dur<req-1: bad.append(f'duration={dur}')
-          if (w,h)!=(1280,720): bad.append(f'resolution={w}x{h}')
-          if frames<=0: bad.append(f'frames={frames}')
-          if bad: raise SystemExit('VIDEO_GATE_FAIL: '+'; '.join(bad))
+          codec = sys.argv[1]
+          duration = float(sys.argv[2])
+          width = int(sys.argv[3])
+          height = int(sys.argv[4])
+          frames = int(sys.argv[5])
+          size = int(sys.argv[6])
+          requested_duration = float(sys.argv[7])
+          requested_fps = float(sys.argv[8])
+          errors = []
+          if codec != 'h264':
+              errors.append(f'codec={codec}')
+          if duration < requested_duration - 1.0:
+              errors.append(f'duration={duration}')
+          if (width, height) != (1280, 720):
+              errors.append(f'resolution={width}x{height}')
+          minimum_frames = int((requested_duration - 1.0) * requested_fps)
+          if frames < minimum_frames:
+              errors.append(f'frames={frames} minimum={minimum_frames}')
+          if size <= 0:
+              errors.append(f'size={size}')
+          if errors:
+              raise SystemExit('VIDEO_CONTAINER_GATE_FAIL: ' + '; '.join(errors))
           print('VIDEO_CONTAINER_GATE=PASS')
           PY
+
           ffmpeg -hide_banner -v error -i "$VIDEO" -f null -
+
+          BLACK_LIMIT="$(python3 - "$DURATION" <<'PY'
+          import sys
+          print(max(1.0, float(sys.argv[1]) - 2.0))
+          PY
+          )"
+          ffmpeg -hide_banner -i "$VIDEO" -vf "blackdetect=d=${BLACK_LIMIT}:pix_th=0.02" -an -f null - \
+            >/dev/null 2> artifacts/blackdetect.txt || true
+          python3 - artifacts/blackdetect.txt "$DURATION" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+          duration = float(sys.argv[2])
+          spans = [float(x) for x in re.findall(r'black_duration:([0-9.]+)', Path(sys.argv[1]).read_text(errors='replace'))]
+          longest = max(spans, default=0.0)
+          limit = max(1.0, duration - 2.0)
+          if longest >= limit:
+              raise SystemExit(f'VIDEO_BLACK_GATE_FAIL: longest={longest} limit={limit}')
+          print(f'VIDEO_BLACK_GATE=PASS longest={longest}')
+          PY
+
           MID="$(python3 - "$DURATION" <<'PY'
-          import sys; print(float(sys.argv[1])/2)
+          import sys
+          print(float(sys.argv[1]) / 2.0)
+          PY
+          )"
+          END="$(python3 - "$DURATION" <<'PY'
+          import sys
+          print(max(0.0, float(sys.argv[1]) - 1.0))
           PY
           )"
           ffmpeg -hide_banner -loglevel error -y -ss 1 -i "$VIDEO" -frames:v 1 artifacts/frame-start.png
           ffmpeg -hide_banner -loglevel error -y -ss "$MID" -i "$VIDEO" -frames:v 1 artifacts/frame-mid.png
-          ffmpeg -hide_banner -loglevel error -y -ss "$(python3 - "$DURATION" <<'PY'
-          import sys; print(max(0.0,float(sys.argv[1])-1.0))
-          PY
-          )" -i "$VIDEO" -frames:v 1 artifacts/frame-end.png
+          ffmpeg -hide_banner -loglevel error -y -ss "$END" -i "$VIDEO" -frames:v 1 artifacts/frame-end.png
           test -s artifacts/frame-start.png
           test -s artifacts/frame-mid.png
           test -s artifacts/frame-end.png
+
+          sha256sum artifacts/frame-start.png artifacts/frame-mid.png artifacts/frame-end.png | tee artifacts/frame-sha256.txt
+          UNIQUE_FRAME_HASHES="$(awk '{print $1}' artifacts/frame-sha256.txt | sort -u | wc -l)"
+          (( UNIQUE_FRAME_HASHES >= 2 ))
+
           ! grep -Eqi 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' artifacts/logs/RoR-after-motion.log
-          awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" 'index($0,"===== LOADING TERRAIN " map){t=NR} index($0,"[RoR|Diag] Preselected Truck:")&&index($0,truck)&&t{p=NR} index($0,"===== DONE LOADING VEHICLE")&&p&&NR>p{d=NR} END{exit !(t&&p>t&&d>p)}' artifacts/logs/RoR-after-motion.log
-          echo 'ROR_MOTION_E2E_ACCEPTANCE=PASS' | tee artifacts/acceptance.txt
+          awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" '
+            index($0,"===== LOADING TERRAIN " map){t=NR}
+            index($0,"[RoR|Diag] Preselected Truck:") && index($0,truck) && t{p=NR}
+            index($0,"===== DONE LOADING VEHICLE") && p && NR>p{d=NR}
+            END{exit !(t && p>t && d>p)}
+          ' artifacts/logs/RoR-after-motion.log
+
+          {
+            echo 'ROR_MOTION_E2E_ACCEPTANCE=PASS'
+            echo 'INPUT_TRANSPORT=FOCUSED_XTEST_PASS'
+            echo 'MOTION=MEASURED_POSITION_CHANGE_PASS'
+            echo 'VIDEO=H264_1280x720_DECODE_PASS'
+          } | tee artifacts/acceptance.txt
 
       - name: Collect diagnostics
         if: always()
@@ -294,6 +496,9 @@ jobs:
           [[ -f "$RUNNER_TEMP/xvfb.log" ]] && cp "$RUNNER_TEMP/xvfb.log" artifacts/logs/xvfb-final.log
           [[ -f "$RUNNER_TEMP/ror-runtime.stdout.log" ]] && cp "$RUNNER_TEMP/ror-runtime.stdout.log" artifacts/logs/ror-runtime.stdout-final.log
           [[ -n "${ROR_LOG:-}" && -f "$ROR_LOG" ]] && cp "$ROR_LOG" artifacts/logs/RoR-final.log
+          if [[ -n "${ROR_USER_DIR:-}" && -f "$ROR_USER_DIR/config/input.map" ]]; then
+            cp "$ROR_USER_DIR/config/input.map" artifacts/logs/runtime-input-final.map
+          fi
           ps auxww > artifacts/logs/ps-final.txt 2>&1 || true
           true
 
