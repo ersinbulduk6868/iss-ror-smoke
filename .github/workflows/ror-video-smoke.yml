@@ -1,0 +1,164 @@
+name: RoR video smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ror-video-smoke.yml'
+
+permissions:
+  contents: read
+
+env:
+  ROR_VERSION: '2022.12'
+  ROR_ZIP_URL: 'https://downloads.sourceforge.net/project/rigs-of-rods/Releases/2022.12/RoR-2022.12-linux.zip'
+  DISPLAY: ':99'
+  LIBGL_ALWAYS_SOFTWARE: '1'
+
+jobs:
+  render-smoke:
+    name: Native Linux RoR software-render smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install runtime tools
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl unzip xvfb ffmpeg mesa-utils \
+            libgl1 libglu1-mesa libx11-6 libxext6 libxrender1 libxi6 \
+            libxrandr2 libxinerama1 libxcursor1 libxfixes3 \
+            libfontconfig1 libfreetype6 libopenal1 libpulse0 libgtk-3-0
+
+      - name: Download official native Linux RoR portable build
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/ror"
+          curl -fL --retry 5 --retry-delay 3 \
+            "$ROR_ZIP_URL" \
+            -o "$RUNNER_TEMP/ror.zip"
+          unzip -q "$RUNNER_TEMP/ror.zip" -d "$RUNNER_TEMP/ror"
+
+          ROR_BIN="$(find "$RUNNER_TEMP/ror" -type f -name RoR -print -quit)"
+          if [[ -z "$ROR_BIN" ]]; then
+            echo 'RoR executable was not found after extraction.' >&2
+            find "$RUNNER_TEMP/ror" -maxdepth 3 -type f | sort | head -200
+            exit 1
+          fi
+
+          chmod +x "$ROR_BIN"
+          echo "ROR_BIN=$ROR_BIN" >> "$GITHUB_ENV"
+          echo "ROR_DIR=$(dirname "$ROR_BIN")" >> "$GITHUB_ENV"
+
+      - name: Verify RoR binary starts
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cd "$ROR_DIR"
+          "$ROR_BIN" --version 2>&1 | tee "$RUNNER_TEMP/ror-version.log" || true
+          file "$ROR_BIN"
+          ldd "$ROR_BIN" | tee "$RUNNER_TEMP/ror-ldd.log" || true
+          if ldd "$ROR_BIN" 2>/dev/null | grep -q 'not found'; then
+            echo 'One or more required shared libraries are missing.' >&2
+            exit 1
+          fi
+
+      - name: Start virtual display and verify software OpenGL
+        shell: bash
+        run: |
+          set -euxo pipefail
+          Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset \
+            >"$RUNNER_TEMP/xvfb.log" 2>&1 &
+          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
+          sleep 2
+          xdpyinfo -display :99 >/dev/null
+          glxinfo -B | tee "$RUNNER_TEMP/glxinfo.log"
+
+      - name: Launch RoR and record rendered frames
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+
+          ffmpeg -hide_banner -loglevel warning -y \
+            -f x11grab -video_size 1280x720 -framerate 30 -i :99.0 \
+            -t 18 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            artifacts/ror-video-smoke.mp4 \
+            >"$RUNNER_TEMP/ffmpeg.out" 2>"$RUNNER_TEMP/ffmpeg.err" &
+          FFMPEG_PID=$!
+
+          cd "$ROR_DIR"
+          "$ROR_BIN" >"$RUNNER_TEMP/ror-runtime.log" 2>&1 &
+          ROR_PID=$!
+          echo "RoR PID: $ROR_PID"
+
+          sleep 10
+          if ! kill -0 "$ROR_PID" 2>/dev/null; then
+            echo 'RoR exited before the 10-second render checkpoint.' >&2
+            cat "$RUNNER_TEMP/ror-runtime.log" || true
+            wait "$ROR_PID" || true
+            exit 1
+          fi
+
+          sleep 6
+          kill "$ROR_PID" 2>/dev/null || true
+          wait "$ROR_PID" 2>/dev/null || true
+          wait "$FFMPEG_PID"
+
+      - name: Validate captured video
+        shell: bash
+        run: |
+          set -euxo pipefail
+          test -s artifacts/ror-video-smoke.mp4
+
+          ffprobe -v error \
+            -select_streams v:0 \
+            -show_entries stream=codec_name,width,height,avg_frame_rate,nb_frames \
+            -show_entries format=duration,size \
+            -of default=noprint_wrappers=1 \
+            artifacts/ror-video-smoke.mp4 | tee artifacts/ffprobe.txt
+
+          DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 artifacts/ror-video-smoke.mp4)"
+          python3 - <<'PY'
+          import os
+          d = float(os.environ['DURATION'])
+          if d < 12.0:
+              raise SystemExit(f'Captured video is too short: {d:.3f}s')
+          print(f'Captured video duration PASS: {d:.3f}s')
+          PY
+        env:
+          DURATION: ${{ env.DURATION }}
+
+      - name: Collect diagnostics
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          mkdir -p artifacts/logs
+          for f in \
+            "$RUNNER_TEMP/ror-version.log" \
+            "$RUNNER_TEMP/ror-ldd.log" \
+            "$RUNNER_TEMP/glxinfo.log" \
+            "$RUNNER_TEMP/xvfb.log" \
+            "$RUNNER_TEMP/ror-runtime.log" \
+            "$RUNNER_TEMP/ffmpeg.out" \
+            "$RUNNER_TEMP/ffmpeg.err"; do
+            [[ -f "$f" ]] && cp "$f" artifacts/logs/
+          done
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ror-video-smoke-evidence
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 7
