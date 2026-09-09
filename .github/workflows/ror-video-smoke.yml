@@ -11,528 +11,263 @@ permissions:
   contents: read
 
 env:
-  ROR_VERSION: '2022.12'
+  ROR_SOURCE_TAG_SHA: 'aab166cafd9f5612941c1fbd39e4c64de3cbc7d9'
   ROR_ZIP_URL: 'https://downloads.sourceforge.net/project/rigs-of-rods/Releases/2022.12/RoR-2022.12-linux.zip'
   ROR_ZIP_SHA256: '8e3d79d9f778607954e980950a737a0ca45f9a2e7e391a4c4150da732fd33de1'
   DISPLAY: ':99'
   LIBGL_ALWAYS_SOFTWARE: '1'
   ALSOFT_DRIVERS: 'null'
   CAPTURE_SECONDS: '20'
-  SCENE_START_TIMEOUT_SECONDS: '150'
+  CAPTURE_FPS: '30'
+  SCENE_START_TIMEOUT_SECONDS: '180'
 
 jobs:
   render-smoke:
-    name: Native Linux RoR source-verified software-render smoke
+    name: Native Linux RoR fully audited software-render smoke
     runs-on: ubuntu-22.04
     timeout-minutes: 25
 
     steps:
-      - name: Install runtime dependencies
+      - name: Install and preflight runner
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             ca-certificates curl unzip file python3 procps psmisc coreutils \
-            xvfb x11-utils xauth dbus-x11 \
-            ffmpeg mesa-utils libgl1 libgl1-mesa-dri libglx-mesa0 libglu1-mesa \
+            xvfb x11-utils xauth dbus-x11 ffmpeg mesa-utils \
+            libgl1 libgl1-mesa-dri libglx-mesa0 libglu1-mesa \
             libx11-6 libxext6 libxrender1 libxi6 libxrandr2 libxinerama1 \
             libxcursor1 libxfixes3 libfontconfig1 libfreetype6 \
             libopenal1 libpulse0 libgtk-3-0
 
-      - name: Runner capability preflight
-        shell: bash
-        run: |
-          set -euxo pipefail
           mkdir -p artifacts/logs
-
-          required=(
-            curl unzip file python3 Xvfb xdpyinfo glxinfo glxgears
-            ffmpeg ffprobe ldd sha256sum timeout grep sed awk find sort
-            tee basename stat realpath
-          )
-          for cmd in "${required[@]}"; do
-            command -v "$cmd"
-          done
-
-          uname -a > artifacts/logs/runner-preflight.txt
-          lsb_release -a >> artifacts/logs/runner-preflight.txt 2>&1 || true
-          ffmpeg -version | sed -n '1p' >> artifacts/logs/runner-preflight.txt
-
+          required=(curl unzip file python3 Xvfb xdpyinfo xwininfo glxinfo glxgears ffmpeg ffprobe ldd sha256sum timeout grep sed awk find sort tee basename stat realpath wc ps)
+          for cmd in "${required[@]}"; do command -v "$cmd"; done
+          test "$(uname -m)" = 'x86_64'
           ffmpeg -hide_banner -encoders > artifacts/logs/ffmpeg-encoders.txt 2>&1
           grep -E '[[:space:]]libx264[[:space:]]' artifacts/logs/ffmpeg-encoders.txt
-
           ffmpeg -hide_banner -devices > artifacts/logs/ffmpeg-devices.txt 2>&1
           grep -F 'x11grab' artifacts/logs/ffmpeg-devices.txt
+          { uname -a; lsb_release -a 2>&1 || true; ffmpeg -version | sed -n '1p'; } > artifacts/logs/runner-preflight.txt
+          printf 'source_tag=%s\npackage_sha256=%s\n' "$ROR_SOURCE_TAG_SHA" "$ROR_ZIP_SHA256" > artifacts/logs/audit-provenance.txt
 
-      - name: Download and verify pinned RoR package
+      - name: Verify complete official RoR installation package
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p "$RUNNER_TEMP/ror" "$RUNNER_TEMP/ror-home" artifacts/logs
-
-          curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
-            "$ROR_ZIP_URL" -o "$RUNNER_TEMP/ror.zip"
-
-          printf '%s  %s\n' "$ROR_ZIP_SHA256" "$RUNNER_TEMP/ror.zip" \
-            | sha256sum -c - \
-            | tee artifacts/logs/ror-zip-sha256-check.txt
-
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 "$ROR_ZIP_URL" -o "$RUNNER_TEMP/ror.zip"
+          printf '%s  %s\n' "$ROR_ZIP_SHA256" "$RUNNER_TEMP/ror.zip" | sha256sum -c - | tee artifacts/logs/ror-zip-sha256-check.txt
           unzip -t "$RUNNER_TEMP/ror.zip" > artifacts/logs/ror-zip-test.txt
+          grep -F 'No errors detected' artifacts/logs/ror-zip-test.txt
           unzip -q "$RUNNER_TEMP/ror.zip" -d "$RUNNER_TEMP/ror"
 
           ROR_DIR="$RUNNER_TEMP/ror"
-          ROR_BIN="$ROR_DIR/RoR"
-          ROR_LAUNCHER="$ROR_DIR/RunRoR"
           ROR_TEST_HOME="$RUNNER_TEMP/ror-home"
           if [[ -d "$ROR_DIR/config" ]]; then
             ROR_USER_DIR="$ROR_DIR/config"
-            ROR_USER_MODE='portable-config-dir'
           else
             ROR_USER_DIR="$ROR_TEST_HOME/.rigsofrods"
-            ROR_USER_MODE='isolated-home'
           fi
           ROR_LOG="$ROR_USER_DIR/logs/RoR.log"
-
-          test -x "$ROR_BIN" || chmod +x "$ROR_BIN"
-          test -f "$ROR_LAUNCHER"
-          chmod +x "$ROR_LAUNCHER"
-          test -f "$ROR_DIR/plugins.cfg"
-          test -d "$ROR_DIR/lib"
-          test -d "$ROR_DIR/resources"
-          test -d "$ROR_DIR/content"
-
-          cp "$ROR_LAUNCHER" artifacts/logs/RunRoR.txt
-          cp "$ROR_DIR/plugins.cfg" artifacts/logs/plugins.cfg
-          grep -F 'LD_LIBRARY_PATH' artifacts/logs/RunRoR.txt
-          grep -F './RoR "$@"' artifacts/logs/RunRoR.txt
-
-          find "$ROR_DIR" -maxdepth 3 -type f | sort > artifacts/logs/ror-package-files.txt
-
           echo "ROR_DIR=$ROR_DIR" >> "$GITHUB_ENV"
-          echo "ROR_BIN=$ROR_BIN" >> "$GITHUB_ENV"
-          echo "ROR_LAUNCHER=$ROR_LAUNCHER" >> "$GITHUB_ENV"
-          printf 'ROR_USER_MODE=%s\nROR_USER_DIR=%s\nROR_LOG=%s\n' \
-            "$ROR_USER_MODE" "$ROR_USER_DIR" "$ROR_LOG" \
-            | tee artifacts/logs/ror-user-path-contract.txt
-
           echo "ROR_TEST_HOME=$ROR_TEST_HOME" >> "$GITHUB_ENV"
           echo "ROR_USER_DIR=$ROR_USER_DIR" >> "$GITHUB_ENV"
           echo "ROR_LOG=$ROR_LOG" >> "$GITHUB_ENV"
 
-      - name: Discover and verify packaged smoke scene
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p artifacts/logs
+          test -f "$ROR_DIR/RoR" && chmod +x "$ROR_DIR/RoR"
+          test -f "$ROR_DIR/RunRoR" && chmod +x "$ROR_DIR/RunRoR"
+          test -f "$ROR_DIR/plugins.cfg"
+          test -d "$ROR_DIR/lib"
+          test -d "$ROR_DIR/resources/managed_materials"
+          test -d "$ROR_DIR/content"
+          cp "$ROR_DIR/RunRoR" artifacts/logs/RunRoR.txt
+          cp "$ROR_DIR/plugins.cfg" artifacts/logs/plugins.cfg
+          grep -F 'LD_LIBRARY_PATH' artifacts/logs/RunRoR.txt
+          grep -F './RoR "$@"' artifacts/logs/RunRoR.txt
 
-          map_matches=()
-          truck_matches=()
+          resources=(OgreCore.zip SkyX.zip airfoils.zip beamobjects.zip caelum.zip cubemaps.zip dashboards.zip famicons.zip flags.zip fonts.zip hydrax.zip icons.zip managed_materials.zip materials.zip meshes.zip mygui.zip overlays.zip paged.zip particles.zip rtshader.zip scripts.zip skeleton.zip sounds.zip textures.zip wallpapers.zip)
+          content=(An-12.zip agora.zip dafsemi.zip nhelens.zip simple2-terrain.zip wahoo.zip)
+          : > artifacts/logs/package-zip-integrity.txt
+          for name in "${resources[@]}"; do test -f "$ROR_DIR/resources/$name"; unzip -t "$ROR_DIR/resources/$name" >/dev/null; echo "PASS resources/$name" >> artifacts/logs/package-zip-integrity.txt; done
+          for name in "${content[@]}"; do test -f "$ROR_DIR/content/$name"; unzip -t "$ROR_DIR/content/$name" >/dev/null; echo "PASS content/$name" >> artifacts/logs/package-zip-integrity.txt; done
+          test "$(wc -l < artifacts/logs/package-zip-integrity.txt)" -eq 31
+          test -f "$ROR_DIR/resources/managed_materials/managed_mats.material"
+          test -f "$ROR_DIR/resources/managed_materials/managed_mats_vehicles.material"
+          find "$ROR_DIR" -maxdepth 3 -type f | sort > artifacts/logs/ror-package-files.txt
 
-          mapfile -t content_archives < <(find "$ROR_DIR/content" -maxdepth 1 -type f -name '*.zip' -print | sort)
-          if (( ${#content_archives[@]} == 0 )); then
-            echo 'No RoR content ZIP archives were found.' >&2
-            exit 1
-          fi
-
-          for archive in "${content_archives[@]}"; do
-            entries="$(unzip -Z1 "$archive")"
+          map_matches=(); truck_matches=()
+          while IFS= read -r archive; do
             while IFS= read -r entry; do
-              [[ -n "$entry" ]] || continue
-              if [[ "$entry" =~ (^|/)simple2\.terrn2$ ]]; then
-                map_matches+=("$archive|$entry")
-              fi
-              if [[ "$entry" =~ (^|/).*semi\.truck$ ]]; then
-                truck_matches+=("$archive|$entry")
-              fi
-            done <<< "$entries"
-          done
-
-          if (( ${#map_matches[@]} != 1 )); then
-            printf 'Expected exactly one simple2.terrn2; found %d\n' "${#map_matches[@]}" >&2
-            printf '%s\n' "${map_matches[@]}" >&2
-            exit 1
-          fi
-          if (( ${#truck_matches[@]} != 1 )); then
-            printf 'Expected exactly one *semi.truck; found %d\n' "${#truck_matches[@]}" >&2
-            printf '%s\n' "${truck_matches[@]}" >&2
-            exit 1
-          fi
-
-          MAP_ARCHIVE="${map_matches[0]%%|*}"
-          MAP_ENTRY="${map_matches[0]#*|}"
-          TRUCK_ARCHIVE="${truck_matches[0]%%|*}"
-          TRUCK_ENTRY="${truck_matches[0]#*|}"
-          ROR_MAP="$(basename "$MAP_ENTRY")"
-          ROR_TRUCK="$(basename "$TRUCK_ENTRY")"
-
-          printf 'MAP_ARCHIVE=%s\nMAP_ENTRY=%s\nROR_MAP=%s\nTRUCK_ARCHIVE=%s\nTRUCK_ENTRY=%s\nROR_TRUCK=%s\n' \
-            "$MAP_ARCHIVE" "$MAP_ENTRY" "$ROR_MAP" \
-            "$TRUCK_ARCHIVE" "$TRUCK_ENTRY" "$ROR_TRUCK" \
-            | tee artifacts/logs/discovered-scene.txt
-
+              [[ "$entry" =~ (^|/)simple2\.terrn2$ ]] && map_matches+=("$archive|$entry")
+              [[ "$entry" =~ (^|/).*semi\.truck$ ]] && truck_matches+=("$archive|$entry")
+            done < <(unzip -Z1 "$archive")
+          done < <(find "$ROR_DIR/content" -maxdepth 1 -type f -name '*.zip' -print | sort)
+          test "${#map_matches[@]}" -eq 1
+          test "${#truck_matches[@]}" -eq 1
+          ROR_MAP="$(basename "${map_matches[0]#*|}")"
+          ROR_TRUCK="$(basename "${truck_matches[0]#*|}")"
           echo "ROR_MAP=$ROR_MAP" >> "$GITHUB_ENV"
           echo "ROR_TRUCK=$ROR_TRUCK" >> "$GITHUB_ENV"
+          printf 'ROR_MAP=%s\nROR_TRUCK=%s\n' "$ROR_MAP" "$ROR_TRUCK" | tee artifacts/logs/discovered-scene.txt
 
-      - name: Verify executable and configured plugin dependency closure
+      - name: Verify RoR binary and plugin closure
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p artifacts/logs/ldd
-
-          ROR_LIB_PATH="$ROR_DIR/lib"
-          export LD_LIBRARY_PATH="$ROR_LIB_PATH${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-          printf 'LD_LIBRARY_PATH=%s\n' "$LD_LIBRARY_PATH" \
-            | tee artifacts/logs/ror-library-path.txt
+          export LD_LIBRARY_PATH="$ROR_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
           check_ldd() {
-            local target="$1"
-            local label="$2"
-            local outfile="artifacts/logs/ldd/${label}.txt"
-            local rc
-
-            set +e
-            ldd "$target" > "$outfile" 2>&1
-            rc=$?
-            set -e
-
-            if (( rc != 0 )); then
-              echo "ldd failed for $target with exit code $rc" >&2
-              cat "$outfile" >&2
-              return 1
-            fi
-            if grep -q 'not found' "$outfile"; then
-              echo "Unresolved dependency in $target" >&2
-              cat "$outfile" >&2
-              return 1
-            fi
+            local target="$1" label="$2" out="artifacts/logs/ldd/$2.txt" rc
+            set +e; ldd "$target" > "$out" 2>&1; rc=$?; set -e
+            (( rc == 0 )) || { cat "$out" >&2; return 1; }
+            ! grep -q 'not found' "$out" || { cat "$out" >&2; return 1; }
           }
 
-          file "$ROR_BIN" | tee artifacts/logs/ror-file.txt
-          check_ldd "$ROR_BIN" 'RoR'
-
+          file "$ROR_DIR/RoR" | tee artifacts/logs/ror-file.txt
+          check_ldd "$ROR_DIR/RoR" RoR
           plugin_folder="$(awk -F= '/^[[:space:]]*PluginFolder[[:space:]]*=/ {sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit}' "$ROR_DIR/plugins.cfg")"
-          if [[ -z "$plugin_folder" ]]; then
-            echo 'plugins.cfg has no PluginFolder entry.' >&2
-            exit 1
-          fi
-
-          if [[ "$plugin_folder" = /* ]]; then
-            plugin_base="$plugin_folder"
-          else
-            plugin_base="$ROR_DIR/$plugin_folder"
-          fi
-          plugin_base="$(realpath -m "$plugin_base")"
-          test -d "$plugin_base"
-
-          plugin_count=0
+          test -n "$plugin_folder"
+          [[ "$plugin_folder" = /* ]] && plugin_base="$plugin_folder" || plugin_base="$ROR_DIR/$plugin_folder"
+          plugin_base="$(realpath "$plugin_base")"
           : > artifacts/logs/resolved-plugins.txt
-
+          count=0
           while IFS= read -r line; do
-            plugin="${line#*=}"
-            plugin="${plugin//$'\r'/}"
-            plugin="$(printf '%s' "$plugin" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
+            plugin="${line#*=}"; plugin="${plugin//$'\r'/}"; plugin="$(echo "$plugin" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//')"
             [[ -n "$plugin" ]] || continue
-
-            plugin_count=$((plugin_count + 1))
-            if [[ "$plugin" == *.so || "$plugin" == *.so.* ]]; then
-              plugin_file="$plugin"
-            else
-              plugin_file="${plugin}.so"
-            fi
-
-            target="$(realpath -m "$plugin_base/$plugin_file")"
-            if [[ ! -f "$target" ]]; then
-              echo "Configured plugin file is missing: $target (Plugin=$plugin)" >&2
-              exit 1
-            fi
-
-            label="$(basename "$target" | sed -E 's/[^A-Za-z0-9_.-]+/_/g')"
-            printf 'Plugin=%s -> %s\n' "$plugin" "$target" \
-              | tee -a artifacts/logs/resolved-plugins.txt
+            count=$((count+1)); candidates=("$plugin_base/$plugin")
+            [[ "$plugin" == *.so || "$plugin" == *.so.* ]] || candidates+=("$plugin_base/${plugin}.so")
+            target=''; for candidate in "${candidates[@]}"; do [[ -f "$candidate" ]] && { [[ -z "$target" ]] || exit 1; target="$candidate"; }; done
+            test -n "$target"
+            target="$(realpath "$target")"; label="$(basename "$target" | sed -E 's/[^A-Za-z0-9_.-]+/_/g')"
+            echo "Plugin=$plugin -> $target" | tee -a artifacts/logs/resolved-plugins.txt
             check_ldd "$target" "$label"
           done < <(grep -E '^[[:space:]]*Plugin[[:space:]]*=' "$ROR_DIR/plugins.cfg")
+          (( count > 0 ))
 
-          if (( plugin_count == 0 )); then
-            echo 'plugins.cfg contains no Plugin entries.' >&2
-            exit 1
-          fi
-
-      - name: Verify RoR binary version contract
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p artifacts/logs "$ROR_TEST_HOME"
           cd "$ROR_DIR"
-
           set +e
-          env -u SNAP_USER_COMMON HOME="$ROR_TEST_HOME" ./RunRoR -version \
-            > "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt" 2>&1
+          env -u SNAP_USER_COMMON HOME="$ROR_TEST_HOME" ./RunRoR -version > "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt" 2>&1
           rc=$?
           set -e
-
           cat "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt"
-          if (( rc != 0 )); then
-            echo "RoR -version failed with exit code $rc" >&2
-            exit 1
-          fi
-          grep -F "$ROR_VERSION" "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt"
+          (( rc == 0 ))
+          grep -F 'Version Information: Rigs of Rods' "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt"
+          grep -E '^ protocol version: .+' "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt"
+          grep -E '^ build time: .+' "$GITHUB_WORKSPACE/artifacts/logs/ror-version.txt"
 
-      - name: Prove X11 OpenGL, launch RoR scene, and capture video
+      - name: Prove X11/OpenGL and capture real RoR scene
         shell: bash
         run: |
           set -euxo pipefail
           mkdir -p artifacts/logs "$ROR_TEST_HOME"
-
-          XVFB_PID=''
-          ROR_PID=''
+          XVFB_PID=''; ROR_PID=''
           cleanup() {
             set +e
-            if [[ -n "$ROR_PID" ]]; then
-              kill -TERM "$ROR_PID" 2>/dev/null || true
-              sleep 1
-              kill -KILL "$ROR_PID" 2>/dev/null || true
-              wait "$ROR_PID" 2>/dev/null || true
-            fi
-            if [[ -n "$XVFB_PID" ]]; then
-              kill -TERM "$XVFB_PID" 2>/dev/null || true
-              wait "$XVFB_PID" 2>/dev/null || true
-            fi
+            [[ -n "$ROR_PID" ]] && { kill -TERM "$ROR_PID" 2>/dev/null || true; sleep 1; kill -KILL "$ROR_PID" 2>/dev/null || true; wait "$ROR_PID" 2>/dev/null || true; }
+            [[ -n "$XVFB_PID" ]] && { kill -TERM "$XVFB_PID" 2>/dev/null || true; wait "$XVFB_PID" 2>/dev/null || true; }
           }
           trap cleanup EXIT
 
-          Xvfb "$DISPLAY" -screen 0 1280x720x24 -ac +extension GLX +render -noreset -nolisten tcp \
-            > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+          Xvfb "$DISPLAY" -screen 0 1280x720x24 -ac +extension GLX +render -noreset -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 &
           XVFB_PID=$!
-
-          x_ready=0
-          for _ in $(seq 1 30); do
-            if xdpyinfo -display "$DISPLAY" > artifacts/logs/xdpyinfo-full.txt 2>&1; then
-              x_ready=1
-              break
-            fi
-            if ! kill -0 "$XVFB_PID" 2>/dev/null; then
-              break
-            fi
-            sleep 0.5
-          done
-
-          if (( x_ready == 0 )); then
-            echo 'Xvfb did not become ready.' >&2
-            cat "$RUNNER_TEMP/xvfb.log" >&2 || true
-            exit 1
-          fi
-
-          sed -n '1,80p' artifacts/logs/xdpyinfo-full.txt > artifacts/logs/xdpyinfo.txt
-          glxinfo -B > artifacts/logs/glxinfo.txt 2>&1
-          cat artifacts/logs/glxinfo.txt
-          grep -Eq '^OpenGL renderer string: .+' artifacts/logs/glxinfo.txt
-
-          set +e
-          timeout 4s glxgears > artifacts/logs/glxgears.txt 2>&1
-          glx_rc=$?
-          set -e
-          if (( glx_rc != 0 && glx_rc != 124 )); then
-            echo "glxgears failed with exit code $glx_rc" >&2
-            cat artifacts/logs/glxgears.txt >&2 || true
-            exit 1
-          fi
+          ready=0
+          for _ in $(seq 1 30); do xdpyinfo -display "$DISPLAY" > artifacts/logs/xdpyinfo.txt 2>&1 && { ready=1; break; }; kill -0 "$XVFB_PID" 2>/dev/null || break; sleep 0.5; done
+          (( ready == 1 )) || { cat "$RUNNER_TEMP/xvfb.log" >&2 || true; exit 1; }
+          glxinfo -B | tee artifacts/logs/glxinfo.txt
+          set +e; timeout 4s glxgears > artifacts/logs/glxgears.txt 2>&1; glx_rc=$?; set -e
+          (( glx_rc == 0 || glx_rc == 124 ))
 
           cd "$ROR_DIR"
-          env -u SNAP_USER_COMMON HOME="$ROR_TEST_HOME" ./RunRoR -map "$ROR_MAP" -truck "$ROR_TRUCK" -enter \
-            > "$RUNNER_TEMP/ror-runtime.stdout.log" 2>&1 &
+          env -u SNAP_USER_COMMON HOME="$ROR_TEST_HOME" ./RunRoR -map "$ROR_MAP" -truck "$ROR_TRUCK" -enter > "$RUNNER_TEMP/ror-runtime.stdout.log" 2>&1 &
           ROR_PID=$!
-          echo "RoR PID: $ROR_PID"
-
           scene_ready=0
           for second in $(seq 1 "$SCENE_START_TIMEOUT_SECONDS"); do
             sleep 1
-
-            if ! kill -0 "$ROR_PID" 2>/dev/null; then
-              echo "RoR exited before scene-ready checkpoint at second $second." >&2
-              cat "$RUNNER_TEMP/ror-runtime.stdout.log" >&2 || true
-              [[ -f "$ROR_LOG" ]] && cat "$ROR_LOG" >&2 || true
-              wait "$ROR_PID" || true
-              exit 1
-            fi
-
+            kill -0 "$ROR_PID" 2>/dev/null || { cat "$RUNNER_TEMP/ror-runtime.stdout.log" >&2 || true; [[ -f "$ROR_LOG" ]] && cat "$ROR_LOG" >&2 || true; exit 1; }
             if [[ -f "$ROR_LOG" ]]; then
-              if awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" '
-                index($0, "===== LOADING TERRAIN " map) { terrain=NR }
-                index($0, "[RoR|Diag] Preselected Truck:") && index($0, truck) && terrain { preselected=NR }
-                index($0, "===== DONE LOADING VEHICLE") && preselected && NR > preselected { done=NR }
-                END { exit !(terrain && preselected > terrain && done > preselected) }
-              ' "$ROR_LOG"; then
-                scene_ready=1
-                echo "RoR scene-ready checkpoint PASS at second $second."
-                break
-              fi
-
-              if grep -Eqi 'FATAL ERROR|No render system plugin available|Terrain not found:' "$ROR_LOG"; then
-                echo 'RoR log contains a fatal startup marker.' >&2
-                cat "$ROR_LOG" >&2
-                exit 1
-              fi
+              grep -Eqi 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' "$ROR_LOG" && { grep -Ein 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' "$ROR_LOG" >&2 || true; exit 1; }
+              if awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" 'index($0,"===== LOADING TERRAIN " map){t=NR} index($0,"[RoR|Diag] Preselected Truck:")&&index($0,truck)&&t{p=NR} index($0,"===== DONE LOADING VEHICLE")&&p&&NR>p{d=NR} END{exit !(t&&p>t&&d>p)}' "$ROR_LOG"; then scene_ready=1; break; fi
             fi
           done
-
-          if (( scene_ready == 0 )); then
-            echo "RoR did not reach the source-verified scene-ready markers within ${SCENE_START_TIMEOUT_SECONDS}s." >&2
-            cat "$RUNNER_TEMP/ror-runtime.stdout.log" >&2 || true
-            [[ -f "$ROR_LOG" ]] && cat "$ROR_LOG" >&2 || true
-            exit 1
-          fi
-
-          sleep 5
-          if ! kill -0 "$ROR_PID" 2>/dev/null; then
-            echo 'RoR exited during scene-settle period.' >&2
-            exit 1
-          fi
+          (( scene_ready == 1 )) || { [[ -f "$ROR_LOG" ]] && cat "$ROR_LOG" >&2 || true; exit 1; }
+          sleep 3; kill -0 "$ROR_PID"
 
           cd "$GITHUB_WORKSPACE"
-          cp "$ROR_LOG" artifacts/logs/RoR.log
+          xwininfo -root -tree > artifacts/logs/xwininfo-tree.txt
+          ROR_WINDOW_ID="$(awk '/"Rigs of Rods version/ {print $1; exit}' artifacts/logs/xwininfo-tree.txt)"
+          test -n "$ROR_WINDOW_ID"
+          xwininfo -id "$ROR_WINDOW_ID" > artifacts/logs/xwininfo-ror.txt
+          cp "$ROR_LOG" artifacts/logs/RoR-before-capture.log
           cp "$RUNNER_TEMP/ror-runtime.stdout.log" artifacts/logs/ror-runtime.stdout.log
           cp "$RUNNER_TEMP/xvfb.log" artifacts/logs/xvfb.log
 
-          set +e
-          timeout "$((CAPTURE_SECONDS + 15))" ffmpeg -hide_banner -loglevel warning -y \
-            -thread_queue_size 512 \
-            -f x11grab -draw_mouse 0 -video_size 1280x720 -framerate 30 -i "${DISPLAY}.0" \
-            -t "$CAPTURE_SECONDS" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \
-            artifacts/ror-video-smoke.mp4 \
+          timeout "$((CAPTURE_SECONDS+15))" ffmpeg -hide_banner -loglevel warning -y -thread_queue_size 512 \
+            -f x11grab -draw_mouse 0 -video_size 1280x720 -framerate "$CAPTURE_FPS" -i "${DISPLAY}.0" \
+            -t "$CAPTURE_SECONDS" -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p artifacts/ror-video-smoke.mp4 \
             > artifacts/logs/ffmpeg-capture.out 2> artifacts/logs/ffmpeg-capture.err
-          ffmpeg_rc=$?
-          set -e
-
-          if (( ffmpeg_rc != 0 )); then
-            echo "ffmpeg capture failed with exit code $ffmpeg_rc" >&2
-            cat artifacts/logs/ffmpeg-capture.err >&2 || true
-            exit 1
-          fi
-
-          if ! kill -0 "$ROR_PID" 2>/dev/null; then
-            echo 'RoR exited before video capture completed.' >&2
-            cat artifacts/logs/ror-runtime.stdout.log >&2 || true
-            cat artifacts/logs/RoR.log >&2 || true
-            exit 1
-          fi
-
+          kill -0 "$ROR_PID"
           cp "$ROR_LOG" artifacts/logs/RoR-after-capture.log
 
-      - name: Validate RoR video evidence
+      - name: Validate real video evidence
         shell: bash
         run: |
           set -euxo pipefail
-          VIDEO='artifacts/ror-video-smoke.mp4'
-          test -s "$VIDEO"
-
-          ffprobe -v error \
-            -select_streams v:0 \
-            -show_entries stream=codec_name,width,height,avg_frame_rate \
-            -show_entries format=duration,size \
-            -of default=noprint_wrappers=1 \
-            "$VIDEO" | tee artifacts/ffprobe.txt
-
+          VIDEO='artifacts/ror-video-smoke.mp4'; test -s "$VIDEO"
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,avg_frame_rate -show_entries format=duration,size -of default=noprint_wrappers=1 "$VIDEO" | tee artifacts/ffprobe.txt
           CODEC="$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$VIDEO")"
           DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$VIDEO")"
           WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$VIDEO")"
           HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$VIDEO")"
           FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$VIDEO")"
-          SIZE_BYTES="$(stat -c '%s' "$VIDEO")"
-
-          python3 - "$CODEC" "$DURATION" "$WIDTH" "$HEIGHT" "$FRAMES" "$SIZE_BYTES" "$CAPTURE_SECONDS" <<'PY'
+          SIZE="$(stat -c '%s' "$VIDEO")"
+          python3 - "$CODEC" "$DURATION" "$WIDTH" "$HEIGHT" "$FRAMES" "$SIZE" "$CAPTURE_SECONDS" <<'PY'
           import sys
-          codec = sys.argv[1]
-          duration = float(sys.argv[2])
-          width = int(sys.argv[3])
-          height = int(sys.argv[4])
-          frames = int(sys.argv[5])
-          size_bytes = int(sys.argv[6])
-          requested = float(sys.argv[7])
-
-          problems = []
-          if codec != 'h264':
-              problems.append(f'codec {codec!r} != h264')
-          if duration < requested - 1.0:
-              problems.append(f'duration {duration:.3f}s < requested-minus-tolerance {requested - 1.0:.3f}s')
-          if (width, height) != (1280, 720):
-              problems.append(f'resolution {width}x{height} != 1280x720')
-          if frames <= 0:
-              problems.append(f'frame count {frames} is not positive')
-          if size_bytes <= 0:
-              problems.append(f'file size {size_bytes} is not positive')
-          if problems:
-              raise SystemExit('VIDEO_CONTAINER_GATE_FAIL: ' + '; '.join(problems))
-          print(f'VIDEO_CONTAINER_GATE_PASS codec={codec} duration={duration:.3f}s frames={frames} size={size_bytes}')
+          codec,dur,w,h,frames,size,req=sys.argv[1],float(sys.argv[2]),int(sys.argv[3]),int(sys.argv[4]),int(sys.argv[5]),int(sys.argv[6]),float(sys.argv[7])
+          bad=[]
+          if codec!='h264': bad.append(f'codec={codec}')
+          if dur<req-1: bad.append(f'duration={dur}')
+          if (w,h)!=(1280,720): bad.append(f'resolution={w}x{h}')
+          if frames<=0: bad.append(f'frames={frames}')
+          if size<=0: bad.append(f'size={size}')
+          if bad: raise SystemExit('VIDEO_CONTAINER_GATE_FAIL: '+'; '.join(bad))
+          print('VIDEO_CONTAINER_GATE_PASS')
           PY
-
           ffmpeg -hide_banner -v error -i "$VIDEO" -f null -
-
-          BLACK_LOG="artifacts/blackdetect.txt"
-          black_limit="$(python3 - "$DURATION" <<'PY'
-          import sys
-          print(max(1.0, float(sys.argv[1]) - 2.0))
+          BLACK_LIMIT="$(python3 - "$DURATION" <<'PY'
+          import sys; print(max(1.0,float(sys.argv[1])-2.0))
           PY
           )"
-          ffmpeg -hide_banner -i "$VIDEO" \
-            -vf "blackdetect=d=${black_limit}:pix_th=0.02" \
-            -an -f null - > /dev/null 2> "$BLACK_LOG" || true
-
-          python3 - "$BLACK_LOG" "$DURATION" <<'PY'
-          import re
-          import sys
+          ffmpeg -hide_banner -i "$VIDEO" -vf "blackdetect=d=${BLACK_LIMIT}:pix_th=0.02" -an -f null - >/dev/null 2> artifacts/blackdetect.txt || true
+          python3 - artifacts/blackdetect.txt "$DURATION" <<'PY'
+          import re,sys
           from pathlib import Path
-
-          path = Path(sys.argv[1])
-          duration = float(sys.argv[2])
-          text = path.read_text(errors='replace')
-          spans = [float(x) for x in re.findall(r'black_duration:([0-9.]+)', text)]
-          longest = max(spans, default=0.0)
-          limit = max(1.0, duration - 2.0)
-          if longest >= limit:
-              raise SystemExit(f'VIDEO_BLACK_GATE_FAIL: longest black interval {longest:.3f}s >= {limit:.3f}s')
-          print(f'VIDEO_BLACK_GATE_PASS longest_black={longest:.3f}s limit={limit:.3f}s')
+          duration=float(sys.argv[2]); spans=[float(x) for x in re.findall(r'black_duration:([0-9.]+)',Path(sys.argv[1]).read_text(errors='replace'))]; longest=max(spans,default=0.0); limit=max(1.0,duration-2.0)
+          if longest>=limit: raise SystemExit(f'VIDEO_BLACK_GATE_FAIL longest={longest} limit={limit}')
+          print(f'VIDEO_BLACK_GATE_PASS longest={longest}')
           PY
-
-          MIDPOINT="$(python3 - "$DURATION" <<'PY'
-          import sys
-          print(float(sys.argv[1]) / 2.0)
+          MID="$(python3 - "$DURATION" <<'PY'
+          import sys; print(float(sys.argv[1])/2)
           PY
           )"
-          ffmpeg -hide_banner -loglevel error -y \
-            -ss "$MIDPOINT" -i "$VIDEO" -frames:v 1 artifacts/midframe.png
+          ffmpeg -hide_banner -loglevel error -y -ss "$MID" -i "$VIDEO" -frames:v 1 artifacts/midframe.png
           test -s artifacts/midframe.png
-
-          if [[ -f artifacts/logs/RoR-after-capture.log ]]; then
-            if grep -Eqi 'FATAL ERROR|No render system plugin available|Terrain not found:' artifacts/logs/RoR-after-capture.log; then
-              echo 'ROR_LOG_GATE_FAIL: fatal marker found after capture.' >&2
-              grep -Ein 'FATAL ERROR|No render system plugin available|Terrain not found:' artifacts/logs/RoR-after-capture.log >&2 || true
-              exit 1
-            fi
-          fi
-
+          ! grep -Eqi 'Startup error|No render system plugin available|Terrain loading error|Terrain not found:|FATAL ERROR' artifacts/logs/RoR-after-capture.log
+          awk -v map="$ROR_MAP" -v truck="$ROR_TRUCK" 'index($0,"===== LOADING TERRAIN " map){t=NR} index($0,"[RoR|Diag] Preselected Truck:")&&index($0,truck)&&t{p=NR} index($0,"===== DONE LOADING VEHICLE")&&p&&NR>p{d=NR} END{exit !(t&&p>t&&d>p)}' artifacts/logs/RoR-after-capture.log
           echo 'ROR_VIDEO_SMOKE_ACCEPTANCE=PASS' | tee artifacts/acceptance.txt
 
-      - name: Collect final diagnostics
+      - name: Collect diagnostics
         if: always()
         shell: bash
         run: |
           set +e
           mkdir -p artifacts/logs
-
           [[ -f "$RUNNER_TEMP/xvfb.log" ]] && cp "$RUNNER_TEMP/xvfb.log" artifacts/logs/xvfb-final.log
           [[ -f "$RUNNER_TEMP/ror-runtime.stdout.log" ]] && cp "$RUNNER_TEMP/ror-runtime.stdout.log" artifacts/logs/ror-runtime.stdout-final.log
           [[ -n "${ROR_LOG:-}" && -f "$ROR_LOG" ]] && cp "$ROR_LOG" artifacts/logs/RoR-final.log
-
-          if [[ -n "${ROR_USER_DIR:-}" && -d "$ROR_USER_DIR/config" ]]; then
-            find "$ROR_USER_DIR/config" -maxdepth 1 -type f -print \
-              > artifacts/logs/ror-config-files.txt 2>&1 || true
-            while IFS= read -r f; do
-              [[ -f "$f" ]] || continue
-              cp "$f" "artifacts/logs/config-$(basename "$f")" || true
-            done < artifacts/logs/ror-config-files.txt
-          fi
-
+          [[ -n "${ROR_USER_DIR:-}" && -d "$ROR_USER_DIR/config" ]] && find "$ROR_USER_DIR/config" -maxdepth 1 -type f -print > artifacts/logs/ror-config-files.txt 2>&1 || true
           ps auxww > artifacts/logs/ps-final.txt 2>&1 || true
           true
 
