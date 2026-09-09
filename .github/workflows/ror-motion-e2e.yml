@@ -49,7 +49,6 @@ jobs:
           grep -E '[[:space:]]libx264[[:space:]]' artifacts/logs/ffmpeg-encoders.txt
           ffmpeg -hide_banner -devices > artifacts/logs/ffmpeg-devices.txt 2>&1
           grep -F 'x11grab' artifacts/logs/ffmpeg-devices.txt
-          xdotool version | tee artifacts/logs/xdotool-version.txt
           printf 'source_tag=%s\npackage_sha256=%s\nposition_event=COMMON_OUTPUT_POSITION Keyboard H\naccelerate_event=TRUCK_ACCELERATE Keyboard UP\ninput_transport=focused-window XTEST (no --window)\n' \
             "$ROR_SOURCE_TAG_SHA" "$ROR_ZIP_SHA256" > artifacts/logs/source-verified-control-contract.txt
 
@@ -226,15 +225,17 @@ jobs:
           sleep 3
           kill -0 "$ROR_PID"
 
-          # Verify the runtime-generated keymap that RoR actually loaded.
-          RUNTIME_INPUT_MAP="$ROR_USER_DIR/config/input.map"
-          test -f "$RUNTIME_INPUT_MAP"
+          # Discover rather than assume the runtime keymap path, then verify both target bindings.
+          mapfile -t runtime_input_maps < <(find "$ROR_USER_DIR" -type f -name 'input.map' -print | sort)
+          test "${#runtime_input_maps[@]}" -eq 1
+          RUNTIME_INPUT_MAP="${runtime_input_maps[0]}"
           cp "$RUNTIME_INPUT_MAP" "$GITHUB_WORKSPACE/artifacts/logs/runtime-input.map"
           grep -Eq '^COMMON_OUTPUT_POSITION[[:space:]]+Keyboard[[:space:]]+H([[:space:]]|$)' "$RUNTIME_INPUT_MAP"
           grep -Eq '^TRUCK_ACCELERATE[[:space:]]+Keyboard[[:space:]]+UP([[:space:]]|$)' "$RUNTIME_INPUT_MAP"
           grep -F 'Manager: X11InputManager' "$ROR_LOG"
           grep -F 'Total Keyboards: 1' "$ROR_LOG"
-          grep -F "Loading input mapping config file: $RUNTIME_INPUT_MAP" "$ROR_LOG"
+          grep -F ' * Loading input mapping input.map' "$ROR_LOG"
+          grep -F ' * Input map successfully loaded:' "$ROR_LOG"
 
           cd "$GITHUB_WORKSPACE"
           xwininfo -root -tree > artifacts/logs/xwininfo-tree.txt
@@ -256,14 +257,14 @@ jobs:
           # With focus already proven, omit --window so xdotool uses XTEST into the focused RoR X11 window.
           capture_position() {
             local label="$1" before now
-            before="$(grep -c '\[RoR|Diag\] Position:' "$ROR_LOG" || true)"
+            before="$(grep -c '^Position:' "$ROR_LOG" || true)"
             assert_focus
             xdotool key h
             for _ in $(seq 1 50); do
               sleep 0.1
-              now="$(grep -c '\[RoR|Diag\] Position:' "$ROR_LOG" || true)"
+              now="$(grep -c '^Position:' "$ROR_LOG" || true)"
               if (( now > before )); then
-                grep '\[RoR|Diag\] Position:' "$ROR_LOG" | tail -n 1 | tee "artifacts/logs/position-${label}.txt"
+                grep '^Position:' "$ROR_LOG" | tail -n 1 | tee "artifacts/logs/position-${label}.txt"
                 return 0
               fi
             done
@@ -496,8 +497,9 @@ jobs:
           [[ -f "$RUNNER_TEMP/xvfb.log" ]] && cp "$RUNNER_TEMP/xvfb.log" artifacts/logs/xvfb-final.log
           [[ -f "$RUNNER_TEMP/ror-runtime.stdout.log" ]] && cp "$RUNNER_TEMP/ror-runtime.stdout.log" artifacts/logs/ror-runtime.stdout-final.log
           [[ -n "${ROR_LOG:-}" && -f "$ROR_LOG" ]] && cp "$ROR_LOG" artifacts/logs/RoR-final.log
-          if [[ -n "${ROR_USER_DIR:-}" && -f "$ROR_USER_DIR/config/input.map" ]]; then
-            cp "$ROR_USER_DIR/config/input.map" artifacts/logs/runtime-input-final.map
+          if [[ -n "${ROR_USER_DIR:-}" && -d "$ROR_USER_DIR" ]]; then
+            found_input_map="$(find "$ROR_USER_DIR" -type f -name 'input.map' -print -quit 2>/dev/null)"
+            [[ -n "$found_input_map" ]] && cp "$found_input_map" artifacts/logs/runtime-input-final.map
           fi
           ps auxww > artifacts/logs/ps-final.txt 2>&1 || true
           true
