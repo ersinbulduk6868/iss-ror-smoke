@@ -15,129 +15,253 @@ env:
   ROR_ZIP_URL: 'https://downloads.sourceforge.net/project/rigs-of-rods/Releases/2022.12/RoR-2022.12-linux.zip'
   DISPLAY: ':99'
   LIBGL_ALWAYS_SOFTWARE: '1'
+  ALSOFT_DRIVERS: 'null'
 
 jobs:
   render-smoke:
-    name: Native Linux RoR software-render smoke
+    name: Native Linux RoR audited software-render smoke
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install runtime tools
+      - name: Install audited runtime dependencies
         shell: bash
         run: |
           set -euxo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            curl unzip xvfb ffmpeg mesa-utils \
-            libgl1 libglu1-mesa libx11-6 libxext6 libxrender1 libxi6 \
-            libxrandr2 libxinerama1 libxcursor1 libxfixes3 \
-            libfontconfig1 libfreetype6 libopenal1 libpulse0 libgtk-3-0
+            ca-certificates curl unzip file python3 procps psmisc \
+            xvfb x11-utils xauth dbus-x11 \
+            ffmpeg mesa-utils libgl1 libgl1-mesa-dri libglx-mesa0 libglu1-mesa \
+            libx11-6 libxext6 libxrender1 libxi6 libxrandr2 libxinerama1 \
+            libxcursor1 libxfixes3 libfontconfig1 libfreetype6 \
+            libopenal1 libpulse0 libgtk-3-0
 
-      - name: Download official native Linux RoR portable build
+      - name: Runner command preflight
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p "$RUNNER_TEMP/ror" "$GITHUB_WORKSPACE/artifacts/logs"
-          curl -fL --retry 5 --retry-delay 3 \
+          mkdir -p artifacts/logs
+          required=(
+            curl unzip file python3 Xvfb xdpyinfo glxinfo glxgears
+            ffmpeg ffprobe ldd sha256sum timeout grep sed awk find sort tee
+          )
+          for cmd in "${required[@]}"; do
+            command -v "$cmd"
+          done
+          {
+            uname -a
+            lsb_release -a 2>/dev/null || true
+            ffmpeg -version | head -1
+            glxinfo -h 2>&1 | head -2 || true
+          } | tee artifacts/logs/runner-preflight.txt
+
+      - name: Download and audit official RoR portable package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p "$RUNNER_TEMP/ror" artifacts/logs
+          curl -fL --retry 5 --retry-all-errors --retry-delay 3 \
             "$ROR_ZIP_URL" \
             -o "$RUNNER_TEMP/ror.zip"
+
+          sha256sum "$RUNNER_TEMP/ror.zip" | tee artifacts/logs/ror-zip-sha256.txt
+          unzip -t "$RUNNER_TEMP/ror.zip" | tee artifacts/logs/ror-zip-test.txt
           unzip -q "$RUNNER_TEMP/ror.zip" -d "$RUNNER_TEMP/ror"
 
-          ROR_BIN="$(find "$RUNNER_TEMP/ror" -type f -name RoR -print -quit)"
-          if [[ -z "$ROR_BIN" ]]; then
-            echo 'RoR executable was not found after extraction.' >&2
-            find "$RUNNER_TEMP/ror" -maxdepth 3 -type f | sort | head -200
-            exit 1
-          fi
+          ROR_DIR="$RUNNER_TEMP/ror"
+          ROR_BIN="$ROR_DIR/RoR"
+          ROR_LAUNCHER="$ROR_DIR/RunRoR"
 
-          chmod +x "$ROR_BIN"
+          test -f "$ROR_BIN"
+          test -f "$ROR_LAUNCHER"
+          test -f "$ROR_DIR/plugins.cfg"
+          test -f "$ROR_DIR/lib/RenderSystem_GL.so"
+          test -f "$ROR_DIR/resources/OgreCore.zip"
+          test -f "$ROR_DIR/content/simple2-terrain.zip"
+          test -f "$ROR_DIR/content/dafsemi.zip"
+
+          chmod +x "$ROR_BIN" "$ROR_LAUNCHER"
+
+          unzip -Z1 "$ROR_DIR/content/simple2-terrain.zip" \
+            | tee artifacts/logs/simple2-contents.txt \
+            | grep -Eq '(^|/)simple2\.terrn2$'
+          unzip -Z1 "$ROR_DIR/content/dafsemi.zip" \
+            | tee artifacts/logs/dafsemi-contents.txt \
+            | grep -Eq '(^|/)semi\.truck$'
+
+          find "$ROR_DIR" -maxdepth 3 -type f | sort \
+            > artifacts/logs/ror-package-files.txt
+
+          echo "ROR_DIR=$ROR_DIR" >> "$GITHUB_ENV"
           echo "ROR_BIN=$ROR_BIN" >> "$GITHUB_ENV"
-          echo "ROR_DIR=$(dirname "$ROR_BIN")" >> "$GITHUB_ENV"
-          find "$RUNNER_TEMP/ror" -maxdepth 3 -type f | sort \
-            > "$GITHUB_WORKSPACE/artifacts/logs/ror-package-files.txt"
+          echo "ROR_LAUNCHER=$ROR_LAUNCHER" >> "$GITHUB_ENV"
+          echo 'ROR_MAP=simple2.terrn2' >> "$GITHUB_ENV"
+          echo 'ROR_TRUCK=semi.truck' >> "$GITHUB_ENV"
 
-      - name: Discover bundled RoR shared libraries
+      - name: Audit executable and plugin dependency closure
         shell: bash
         run: |
           set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/artifacts/logs"
-
-          find "$RUNNER_TEMP/ror" \( -type f -o -type l \) -name '*.so*' -print | sort \
-            | tee "$GITHUB_WORKSPACE/artifacts/logs/ror-shared-libraries.txt"
+          mkdir -p artifacts/logs/ldd
 
           mapfile -t LIB_DIRS < <(
-            find "$RUNNER_TEMP/ror" \( -type f -o -type l \) -name '*.so*' -printf '%h\n' \
-              | sort -u
+            find "$ROR_DIR" \( -type f -o -type l \) -name '*.so*' -printf '%h\n' | sort -u
           )
-
           if (( ${#LIB_DIRS[@]} == 0 )); then
-            echo 'No bundled shared-library directories were found in the RoR package.' >&2
+            echo 'No bundled shared-library directories found.' >&2
             exit 1
           fi
-
           ROR_LIB_PATH="$(IFS=:; echo "${LIB_DIRS[*]}")"
-          echo "ROR_LIB_PATH=$ROR_LIB_PATH" | tee "$GITHUB_WORKSPACE/artifacts/logs/ror-library-path.txt"
-          echo "LD_LIBRARY_PATH=$ROR_LIB_PATH" >> "$GITHUB_ENV"
+          echo "ROR_LIB_PATH=$ROR_LIB_PATH" | tee artifacts/logs/ror-library-path.txt
+          echo "ROR_LIB_PATH=$ROR_LIB_PATH" >> "$GITHUB_ENV"
 
-      - name: Verify RoR runtime dependencies
-        shell: bash
-        run: |
-          set -euxo pipefail
-          cd "$ROR_DIR"
-          file "$ROR_BIN" | tee "$GITHUB_WORKSPACE/artifacts/logs/ror-file.txt"
-          ldd "$ROR_BIN" | tee "$RUNNER_TEMP/ror-ldd.log" "$GITHUB_WORKSPACE/artifacts/logs/ror-ldd.log" || true
-          if ldd "$ROR_BIN" 2>/dev/null | grep -q 'not found'; then
-            echo 'One or more required shared libraries are still missing after adding the portable package library paths.' >&2
+          check_ldd() {
+            local target="$1"
+            local label="$2"
+            local outfile="artifacts/logs/ldd/${label}.txt"
+            echo "=== $target ===" | tee "$outfile"
+            env LD_LIBRARY_PATH="$ROR_LIB_PATH" ldd "$target" | tee -a "$outfile" || true
+            if grep -q 'not found' "$outfile"; then
+              echo "Unresolved dependency in $target" >&2
+              return 1
+            fi
+          }
+
+          file "$ROR_BIN" | tee artifacts/logs/ror-file.txt
+          check_ldd "$ROR_BIN" 'RoR'
+
+          plugin_fail=0
+          while IFS= read -r line; do
+            plugin="${line#Plugin=}"
+            plugin="${plugin//$'\r'/}"
+            [[ -n "$plugin" ]] || continue
+            target="$ROR_DIR/lib/${plugin}.so"
+            if [[ ! -f "$target" ]]; then
+              echo "Plugin listed in plugins.cfg is missing: $target" >&2
+              plugin_fail=1
+              continue
+            fi
+            safe_label="${plugin//\//_}"
+            check_ldd "$target" "$safe_label" || plugin_fail=1
+          done < <(grep -E '^Plugin=' "$ROR_DIR/plugins.cfg")
+
+          if (( plugin_fail != 0 )); then
             exit 1
           fi
 
-      - name: Start virtual display and verify software OpenGL
+      - name: Start and prove X11 software OpenGL stack
         shell: bash
         run: |
           set -euxo pipefail
+          mkdir -p artifacts/logs
+
           Xvfb :99 -screen 0 1280x720x24 -ac +extension GLX +render -noreset \
             >"$RUNNER_TEMP/xvfb.log" 2>&1 &
-          echo "XVFB_PID=$!" >> "$GITHUB_ENV"
-          sleep 2
-          xdpyinfo -display :99 >/dev/null
-          glxinfo -B | tee "$RUNNER_TEMP/glxinfo.log" "$GITHUB_WORKSPACE/artifacts/logs/glxinfo.log"
+          XVFB_PID=$!
+          echo "XVFB_PID=$XVFB_PID" >> "$GITHUB_ENV"
 
-      - name: Launch RoR and record rendered frames
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          ready=0
+          for _ in $(seq 1 20); do
+            if xdpyinfo -display :99 >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$XVFB_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
 
-          ffmpeg -hide_banner -loglevel warning -y \
-            -f x11grab -video_size 1280x720 -framerate 30 -i :99.0 \
-            -t 18 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
-            "$GITHUB_WORKSPACE/artifacts/ror-video-smoke.mp4" \
-            >"$RUNNER_TEMP/ffmpeg.out" 2>"$RUNNER_TEMP/ffmpeg.err" &
-          FFMPEG_PID=$!
-
-          cd "$ROR_DIR"
-          "$ROR_BIN" >"$RUNNER_TEMP/ror-runtime.log" 2>&1 &
-          ROR_PID=$!
-          echo "RoR PID: $ROR_PID"
-
-          sleep 10
-          if ! kill -0 "$ROR_PID" 2>/dev/null; then
-            echo 'RoR exited before the 10-second render checkpoint.' >&2
-            cat "$RUNNER_TEMP/ror-runtime.log" || true
-            wait "$ROR_PID" || true
+          if (( ready == 0 )); then
+            echo 'Xvfb did not become ready.' >&2
+            cat "$RUNNER_TEMP/xvfb.log" || true
             exit 1
           fi
 
-          sleep 6
-          kill "$ROR_PID" 2>/dev/null || true
+          xdpyinfo -display :99 | head -80 | tee artifacts/logs/xdpyinfo.txt
+          glxinfo -B | tee "$RUNNER_TEMP/glxinfo.log" artifacts/logs/glxinfo.txt
+          grep -Eq '^OpenGL renderer string: .+' artifacts/logs/glxinfo.txt
+
+          set +e
+          timeout 4s glxgears >"$RUNNER_TEMP/glxgears.log" 2>&1
+          GLXGEARS_RC=$?
+          set -e
+          if [[ "$GLXGEARS_RC" -ne 0 && "$GLXGEARS_RC" -ne 124 ]]; then
+            echo "glxgears failed with exit code $GLXGEARS_RC" >&2
+            cat "$RUNNER_TEMP/glxgears.log" || true
+            exit 1
+          fi
+          cat "$RUNNER_TEMP/glxgears.log" | tee artifacts/logs/glxgears.txt || true
+
+      - name: Launch deterministic RoR scene and capture video
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts/logs
+
+          ffmpeg -hide_banner -loglevel warning -y \
+            -thread_queue_size 512 \
+            -f x11grab -draw_mouse 0 -video_size 1280x720 -framerate 30 -i :99.0 \
+            -t 30 -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \
+            artifacts/ror-video-smoke.mp4 \
+            >"$RUNNER_TEMP/ffmpeg.out" 2>"$RUNNER_TEMP/ffmpeg.err" &
+          FFMPEG_PID=$!
+          echo "FFMPEG_PID=$FFMPEG_PID" >> "$GITHUB_ENV"
+
+          cd "$ROR_DIR"
+          ./RunRoR -map "$ROR_MAP" -truck "$ROR_TRUCK" -enter \
+            >"$RUNNER_TEMP/ror-runtime.log" 2>&1 &
+          ROR_PID=$!
+          echo "ROR_PID=$ROR_PID" >> "$GITHUB_ENV"
+          echo "RoR PID: $ROR_PID"
+
+          for second in $(seq 1 25); do
+            sleep 1
+            if ! kill -0 "$ROR_PID" 2>/dev/null; then
+              echo "RoR exited before the 25-second runtime checkpoint at second $second." >&2
+              cat "$RUNNER_TEMP/ror-runtime.log" || true
+              wait "$ROR_PID" || true
+              exit 1
+            fi
+            if ! kill -0 "$FFMPEG_PID" 2>/dev/null; then
+              echo "ffmpeg exited early at second $second." >&2
+              cat "$RUNNER_TEMP/ffmpeg.err" || true
+              wait "$FFMPEG_PID" || true
+              exit 1
+            fi
+          done
+
+          echo 'RoR runtime survival checkpoint PASS: 25 seconds.'
+          kill -TERM "$ROR_PID" 2>/dev/null || true
+          for _ in $(seq 1 10); do
+            if ! kill -0 "$ROR_PID" 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          kill -KILL "$ROR_PID" 2>/dev/null || true
           wait "$ROR_PID" 2>/dev/null || true
+
           wait "$FFMPEG_PID"
 
-      - name: Validate captured video
+          cd "$GITHUB_WORKSPACE"
+          cp "$RUNNER_TEMP/ror-runtime.log" artifacts/logs/ror-runtime.log || true
+          cp "$RUNNER_TEMP/ffmpeg.out" artifacts/logs/ffmpeg.out || true
+          cp "$RUNNER_TEMP/ffmpeg.err" artifacts/logs/ffmpeg.err || true
+
+          find "$HOME" "$ROR_DIR" -type f \( -name 'RoR.log' -o -name 'ogre.cfg' -o -name 'RoR.cfg' \) \
+            -print 2>/dev/null | tee artifacts/logs/ror-generated-files.txt || true
+          while IFS= read -r f; do
+            [[ -f "$f" ]] || continue
+            base="$(basename "$f")"
+            cp "$f" "artifacts/logs/${base}" || true
+          done < artifacts/logs/ror-generated-files.txt
+
+      - name: Validate runtime evidence and captured video
         shell: bash
         run: |
           set -euxo pipefail
@@ -146,37 +270,85 @@ jobs:
 
           ffprobe -v error \
             -select_streams v:0 \
-            -show_entries stream=codec_name,width,height,avg_frame_rate,nb_frames \
+            -show_entries stream=codec_name,width,height,avg_frame_rate \
             -show_entries format=duration,size \
             -of default=noprint_wrappers=1 \
             "$VIDEO" | tee artifacts/ffprobe.txt
 
           DURATION="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$VIDEO")"
-          python3 - "$DURATION" <<'PY'
+          WIDTH="$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$VIDEO")"
+          HEIGHT="$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$VIDEO")"
+          FRAMES="$(ffprobe -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of csv=p=0 "$VIDEO")"
+          SIZE_BYTES="$(stat -c '%s' "$VIDEO")"
+
+          python3 - "$DURATION" "$WIDTH" "$HEIGHT" "$FRAMES" "$SIZE_BYTES" <<'PY'
           import sys
-          d = float(sys.argv[1])
-          if d < 12.0:
-              raise SystemExit(f'Captured video is too short: {d:.3f}s')
-          print(f'Captured video duration PASS: {d:.3f}s')
+          duration = float(sys.argv[1])
+          width = int(sys.argv[2])
+          height = int(sys.argv[3])
+          frames = int(sys.argv[4])
+          size_bytes = int(sys.argv[5])
+          problems = []
+          if duration < 24.0:
+              problems.append(f'duration {duration:.3f}s < 24s')
+          if (width, height) != (1280, 720):
+              problems.append(f'resolution {width}x{height} != 1280x720')
+          if frames < 600:
+              problems.append(f'frames {frames} < 600')
+          if size_bytes < 100_000:
+              problems.append(f'file size {size_bytes} < 100000 bytes')
+          if problems:
+              raise SystemExit('VIDEO_GATE_FAIL: ' + '; '.join(problems))
+          print(f'VIDEO_BASIC_GATE_PASS duration={duration:.3f}s frames={frames} size={size_bytes}')
           PY
 
-          BLACK_LOG="$(ffmpeg -hide_banner -i "$VIDEO" -vf 'blackdetect=d=10:pix_th=0.05' -an -f null - 2>&1 || true)"
+          ffmpeg -hide_banner -loglevel error -i "$VIDEO" \
+            -vf "fps=1,signalstats,metadata=print:file=artifacts/signalstats.txt" \
+            -an -f null -
+
+          python3 - <<'PY'
+          from pathlib import Path
+          vals = []
+          for line in Path('artifacts/signalstats.txt').read_text(errors='replace').splitlines():
+              if line.startswith('lavfi.signalstats.YAVG='):
+                  vals.append(float(line.split('=', 1)[1]))
+          if len(vals) < 20:
+              raise SystemExit(f'VIDEO_SIGNAL_FAIL: only {len(vals)} luminance samples')
+          if max(vals) - min(vals) < 2.0:
+              raise SystemExit(f'VIDEO_SIGNAL_FAIL: near-static luminance range {max(vals)-min(vals):.3f}')
+          if max(vals) < 20.0:
+              raise SystemExit(f'VIDEO_SIGNAL_FAIL: video is effectively too dark, max YAVG={max(vals):.3f}')
+          print(f'VIDEO_SIGNAL_PASS samples={len(vals)} min={min(vals):.3f} max={max(vals):.3f}')
+          PY
+
+          BLACK_LOG="$(ffmpeg -hide_banner -i "$VIDEO" -vf 'blackdetect=d=20:pix_th=0.05' -an -f null - 2>&1 || true)"
           printf '%s\n' "$BLACK_LOG" | tee artifacts/blackdetect.txt
-          if printf '%s\n' "$BLACK_LOG" | grep -Eq 'black_duration:(1[2-9]|[2-9][0-9])'; then
-            echo 'Captured video appears effectively black for the smoke-test window.' >&2
+          if printf '%s\n' "$BLACK_LOG" | grep -Eq 'black_duration:(2[0-9]|[3-9][0-9])'; then
+            echo 'VIDEO_BLACK_GATE_FAIL: capture contains a >=20s continuous black interval.' >&2
             exit 1
           fi
 
-      - name: Collect diagnostics
+          if [[ -f artifacts/logs/RoR.log ]]; then
+            grep -E 'Starting renderer|Loading Terrain|simple2|semi\.truck' artifacts/logs/RoR.log \
+              | tail -100 | tee artifacts/logs/ror-success-markers.txt || true
+            if grep -Eqi 'No render system plugin available|Could not load file.*plugins|Startup error' artifacts/logs/RoR.log; then
+              echo 'ROR_LOG_GATE_FAIL: startup/rendering error marker found in RoR.log.' >&2
+              exit 1
+            fi
+          fi
+
+          echo 'ROR_VIDEO_SMOKE_ACCEPTANCE=PASS' | tee artifacts/acceptance.txt
+
+      - name: Collect final diagnostics
         if: always()
         shell: bash
         run: |
           set +e
           mkdir -p artifacts/logs
           for f in \
-            "$RUNNER_TEMP/ror-ldd.log" \
-            "$RUNNER_TEMP/glxinfo.log" \
             "$RUNNER_TEMP/xvfb.log" \
+            "$RUNNER_TEMP/glxinfo.log" \
+            "$RUNNER_TEMP/glxgears.log" \
             "$RUNNER_TEMP/ror-runtime.log" \
             "$RUNNER_TEMP/ffmpeg.out" \
             "$RUNNER_TEMP/ffmpeg.err"; do
@@ -184,6 +356,7 @@ jobs:
               cp "$f" artifacts/logs/
             fi
           done
+          ps auxww > artifacts/logs/ps-final.txt 2>&1 || true
           true
 
       - name: Upload smoke evidence
@@ -192,5 +365,5 @@ jobs:
         with:
           name: ror-video-smoke-evidence
           path: artifacts/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 7
