@@ -1,0 +1,74 @@
+name: ISS Blender generic hypercar author
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-asset-author.yml'
+      - 'blender/author_generic_hypercar.py'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+
+jobs:
+  author-hypercar:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - name: Install runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+      - name: Download exact Blender LTS
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" blender-version.txt
+      - name: Author and validate generic hypercar
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup --python blender/author_generic_hypercar.py 2>&1 | tee hypercar-author.log
+          grep -F 'ISS_HYPERCAR_AUTHORING=PASS' hypercar-author.log
+          test -s assets/generated/generic-hypercar-v1/generic_hypercar.glb
+          test -s assets/generated/generic-hypercar-v1/manifest.json
+          test -s assets/generated/generic-hypercar-v1/preview.png
+      - name: Commit immutable generated asset
+        run: |
+          set -euo pipefail
+          git config user.name 'ISS Blender Asset Author'
+          git config user.email 'actions@users.noreply.github.com'
+          git add assets/generated/generic-hypercar-v1/
+          if git diff --cached --quiet; then
+            echo 'ASSET_COMMIT_SHA='$(git rev-parse HEAD)
+          else
+            git commit -m 'Publish machine-validated generic hypercar asset'
+            git push origin HEAD:main
+            echo 'ASSET_COMMIT_SHA='$(git rev-parse HEAD)
+          fi
+      - name: Upload authoring evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-hypercar-authoring-evidence
+          path: |
+            hypercar-author.log
+            blender-version.txt
+            assets/generated/generic-hypercar-v1/manifest.json
+            assets/generated/generic-hypercar-v1/preview.png
+          if-no-files-found: warn
+          retention-days: 7
