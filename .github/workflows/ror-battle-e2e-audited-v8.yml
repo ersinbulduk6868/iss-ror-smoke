@@ -1,0 +1,69 @@
+name: RoR battle E2E audited v8
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ror-battle-e2e-audited-v8.yml'
+      - '.github/ror-v8/**'
+      - '.github/ror-v7/**'
+      - '.github/ror-v6/**'
+
+permissions:
+  contents: read
+
+env:
+  ROR_SOURCE_TAG_SHA: 'aab166cafd9f5612941c1fbd39e4c64de3cbc7d9'
+  ROR_ZIP_URL: 'https://downloads.sourceforge.net/project/rigs-of-rods/Releases/2022.12/RoR-2022.12-linux.zip'
+  ROR_ZIP_SHA256: '8e3d79d9f778607954e980950a737a0ca45f9a2e7e391a4c4150da732fd33de1'
+  DISPLAY: ':99'
+  LIBGL_ALWAYS_SOFTWARE: '1'
+  ALSOFT_DRIVERS: 'null'
+  CAPTURE_SECONDS: '30'
+  CAPTURE_FPS: '30'
+  SCENE_START_TIMEOUT_SECONDS: '180'
+  PROBE_SCRIPT_NAME: 'iss_motion_probe_v6.as'
+
+jobs:
+  battle-e2e:
+    name: Audited real RoR two-actor contact and damage v8
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install and preflight runner
+        shell: bash
+        run: bash .github/ror-v6/01-install-preflight.sh
+
+      - name: Download and verify exact official RoR package
+        shell: bash
+        run: bash .github/ror-v6/02-download-verify-package.sh
+
+      - name: Apply accepted V7 software-render profile
+        shell: bash
+        run: bash .github/ror-v7/03-prepare-software-render-profile.sh
+
+      - name: Run real two-actor battle contact and damage gate
+        shell: bash
+        run: bash .github/ror-v8/03-run-two-actor-battle.sh
+
+      - name: Validate battle video and final V8 acceptance
+        shell: bash
+        run: bash .github/ror-v8/04-validate-battle-video.sh
+
+      - name: Collect diagnostics
+        if: always()
+        shell: bash
+        run: bash .github/ror-v6/05-collect-diagnostics.sh
+
+      - name: Upload V8 battle evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ror-battle-e2e-audited-v8-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
