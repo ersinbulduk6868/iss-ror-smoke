@@ -1,0 +1,50 @@
+name: ISS Asset Service external provider smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/asset-external-provider-smoke.yml'
+      - 'asset/provider_smoke.py'
+
+concurrency:
+  group: iss-asset-external-provider-smoke
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  external-provider-smoke:
+    name: Asset Service external provider handoff
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Static validate smoke client
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile asset/provider_smoke.py
+          echo 'ASSET_PROVIDER_SMOKE_STATIC=PASS'
+
+      - name: Execute Asset Service external-provider path
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 asset/provider_smoke.py 2>&1 | tee asset-provider-smoke.log
+          grep -F 'ASSET_EXTERNAL_PROVIDER_HANDOFF=PASS' asset-provider-smoke.log
+          echo 'ASSET_PROVIDER_SMOKE_RUN=PASS'
+
+      - name: Upload smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-asset-provider-smoke-${{ github.run_id }}
+          path: asset-provider-smoke.log
+          if-no-files-found: warn
+          retention-days: 7
