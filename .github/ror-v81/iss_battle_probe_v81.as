@@ -159,6 +159,7 @@ void frameStep(float dt)
         game.log("ISS_BATTLE_PAIR_READY actors="+game.getNumTrucks());
     }
 
+    // Stage B first. A must remain at real accel=0 until blocker-ready.
     if (g_pair_ready && !g_stage_active && !g_blocker_ready)
     {
         if (inputs.getEventBoolValue(EV_TRUCK_ACCELERATE))
@@ -209,6 +210,7 @@ void frameStep(float dt)
 
     if (g_blocker_ready && inputs.getEventBoolValue(EV_TRUCK_ACCELERATE))
     {
+        // This is only a marker; the actual A actuation remains external real XTEST UP.
         if (g_seq % 20 == 0) game.log("ISS_BATTLE_PLAYER_DRIVE_ACTIVE accel_ack=1");
     }
 
