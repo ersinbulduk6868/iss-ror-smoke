@@ -1,0 +1,78 @@
+name: ISS Blender battle backend smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-battle-smoke.yml'
+      - 'blender/**'
+      - 'README.md'
+
+permissions:
+  contents: read
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+
+jobs:
+  blender-smoke:
+    name: Headless rigid-body collision and render smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+
+      - name: Download exact official Blender LTS build
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          test -x ".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+
+      - name: Verify exact Blender version
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" blender-version.txt
+          echo 'BLENDER_HEADLESS_PREFLIGHT=PASS'
+
+      - name: Run ISS Blender battle backend smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup --python blender/iss_blender_smoke.py 2>&1 | tee artifacts/blender-smoke.log
+          grep -F 'ISS_BLENDER_SMOKE=PASS' artifacts/blender-smoke.log
+
+      - name: Validate machine evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 blender/validate_smoke.py artifacts/blender_smoke_result.json
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 artifacts/blender_smoke.mp4 | tee artifacts/video-duration.txt
+          test -s artifacts/blender_smoke.mp4
+          echo 'ISS_BLENDER_VIDEO=PASS'
+
+      - name: Upload Blender smoke evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-blender-battle-backend-smoke-evidence
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
