@@ -72,7 +72,9 @@ void eventCallback(int eventnum, int value)
     {
         g_beam_breaks++;
         float contactDist = minNodeDistance(g_player, g_ai_actor);
-        int accel = inputs.getEventBoolValue(EV_TRUCK_ACCELERATE) ? 1 : 0;
+        int accel = 0;
+        if (inputs.getEventBoolValue(EV_TRUCK_ACCELERATE))
+            accel = 1;
         int aiActive = 0;
         if (g_ai_active)
             aiActive = 1;
@@ -214,12 +216,17 @@ void frameStep(float dt)
         float dx = pa.x - pb.x;
         float dz = pa.z - pb.z;
         float centerDist = sqrt(dx * dx + dz * dz);
-        int accel = inputs.getEventBoolValue(EV_TRUCK_ACCELERATE) ? 1 : 0;
+        int accel = 0;
+        if (inputs.getEventBoolValue(EV_TRUCK_ACCELERATE))
+            accel = 1;
+        int aiFlag = 0;
+        if (g_ai_active)
+            aiFlag = 1;
         game.log("ISS_BATTLE_TELEM seq=" + g_seq
             + " ax=" + pa.x + " ay=" + pa.y + " az=" + pa.z + " aspeed=" + g_player.getSpeed()
             + " bx=" + pb.x + " by=" + pb.y + " bz=" + pb.z + " bspeed=" + g_ai_actor.getSpeed()
             + " centerDist=" + centerDist + " accel=" + accel
-            + " ai=" + (g_ai_active ? 1 : 0)
+            + " ai=" + aiFlag
             + " breaks=" + g_beam_breaks + " contactBreaks=" + g_contact_breaks
             + " resets=" + g_resets + " teleports=" + g_teleports
             + " actors=" + game.getNumTrucks());
