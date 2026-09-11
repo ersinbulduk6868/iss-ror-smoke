@@ -6,8 +6,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/blender-battle-smoke.yml'
-      - 'blender/**'
-      - 'README.md'
+      - 'blender/iss_blender_smoke.py'
+      - 'blender/validate_smoke.py'
 
 concurrency:
   group: iss-blender-battle-backend-smoke
