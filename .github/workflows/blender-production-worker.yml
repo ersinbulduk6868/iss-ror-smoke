@@ -1,0 +1,65 @@
+name: ISS Blender production worker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-production-worker.yml'
+      - 'blender/production_worker_client.py'
+      - 'blender/iss_blender_production_worker.py'
+
+concurrency:
+  group: iss-blender-production-worker
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  production-worker:
+    name: Generation Battle Executor Blender worker
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+    steps:
+      - name: Checkout exact worker candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Static validate worker sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile blender/production_worker_client.py blender/iss_blender_production_worker.py
+          echo 'BLENDER_PRODUCTION_WORKER_STATIC=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+          echo 'BLENDER_PRODUCTION_DEPENDENCIES=PASS'
+
+      - name: Claim and execute one Generation battle job
+        shell: bash
+        env:
+          ISS_BLENDER_CONTROL_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/bullet-physics-proof'
+        run: |
+          set -euo pipefail
+          python3 blender/production_worker_client.py 2>&1 | tee production-worker.log
+          grep -Eq '"marker": "(BLENDER_QUEUE_EMPTY_PASS|BLENDER_PRODUCTION_JOB_PASS)"' production-worker.log
+          echo 'BLENDER_PRODUCTION_WORKER_RUN=PASS'
+
+      - name: Upload worker evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-blender-production-worker-evidence-${{ github.run_id }}
+          path: |
+            production-worker.log
+            artifacts/production-worker/
+          if-no-files-found: warn
+          retention-days: 7
