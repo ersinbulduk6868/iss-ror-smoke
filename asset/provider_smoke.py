@@ -52,6 +52,7 @@ status = call("status")
 print(json.dumps({"marker": "ASSET_PROVIDER_CONTROL_STATUS", "result": status}, sort_keys=True))
 if status.get("success") is not True:
     raise SystemExit("CONTROL_STATUS_FAILED")
+print(f"SKETCHFAB_CREDENTIAL_PRESENT={str(bool(status.get('sketchfabCredentialPresent'))).lower()}")
 result = call("run_smoke")
 print(json.dumps(result, indent=2, sort_keys=True))
 if result.get("success") is not True or result.get("marker") != "ASSET_EXTERNAL_PROVIDER_HANDOFF=PASS":
