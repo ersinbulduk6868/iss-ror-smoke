@@ -12,7 +12,9 @@ import urllib.request
 
 CONTROL_URL = os.environ.get("ISS_BLENDER_CONTROL_URL", "https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/bullet-physics-proof")
 AUDIENCE = "iss-blender-worker"
-WORKER_VERSION = "blender-production-worker-1.0.0"
+WORKER_VERSION = "blender-production-worker-1.0.1"
+BLENDER_VERSION = "4.5.13"
+BLENDER_URL = f"https://download.blender.org/release/Blender4.5/blender-{BLENDER_VERSION}-linux-x64.tar.xz"
 ROOT = pathlib.Path.cwd()
 ARTIFACTS = ROOT / "artifacts" / "production-worker"
 ASSETS = ARTIFACTS / "assets"
@@ -25,8 +27,7 @@ for p in (ARTIFACTS, ASSETS, OUTPUT):
 
 
 def log(marker, **fields):
-    record = {"marker": marker, "time": time.time(), **fields}
-    print(json.dumps(record, sort_keys=True), flush=True)
+    print(json.dumps({"marker": marker, "time": time.time(), **fields}, sort_keys=True), flush=True)
 
 
 def oidc_token():
@@ -66,6 +67,28 @@ def sha256_file(path):
     return h.hexdigest()
 
 
+def ensure_blender():
+    existing = os.environ.get("BLENDER_BIN", "")
+    if existing and pathlib.Path(existing).is_file():
+        return existing
+    root = ROOT / ".blender"
+    binary = root / f"blender-{BLENDER_VERSION}-linux-x64" / "blender"
+    if binary.is_file():
+        return str(binary)
+    root.mkdir(exist_ok=True)
+    archive = root / "blender.tar.xz"
+    log("BLENDER_DOWNLOAD_START", version=BLENDER_VERSION)
+    subprocess.run(["curl", "--fail", "--location", "--retry", "3", "--retry-all-errors", BLENDER_URL, "-o", str(archive)], check=True)
+    subprocess.run(["tar", "-xJf", str(archive), "-C", str(root)], check=True)
+    if not binary.is_file():
+        raise RuntimeError("BLENDER_BINARY_NOT_FOUND_AFTER_EXTRACT")
+    version = subprocess.check_output([str(binary), "--version"], text=True, timeout=30)
+    if f"Blender {BLENDER_VERSION}" not in version:
+        raise RuntimeError("BLENDER_VERSION_MISMATCH")
+    log("BLENDER_DOWNLOAD_PASS", version=BLENDER_VERSION)
+    return str(binary)
+
+
 def asset_http_url(uri):
     if uri.startswith("https://"):
         return uri
@@ -99,7 +122,7 @@ def download_assets(job):
         ext = suffix_for(uri)
         dest = ASSETS / f"actor-{index:02d}{ext}"
         url = asset_http_url(uri)
-        log("ASSET_DOWNLOAD_START", entityId=entity, sourceScheme=urllib.parse.urlparse(url).scheme, extension=ext)
+        log("ASSET_DOWNLOAD_START", entityId=entity, extension=ext)
         req = urllib.request.Request(url, headers={"User-Agent": "ISS-Blender-Production-Worker/1.0"})
         try:
             with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as out:
@@ -123,11 +146,9 @@ def download_assets(job):
 
 
 def run_blender(job_id, worker_id):
-    blender = os.environ.get("BLENDER_BIN", "")
-    if not blender or not pathlib.Path(blender).is_file():
-        raise RuntimeError("BLENDER_BIN_MISSING")
+    blender = ensure_blender()
     cmd = [blender, "--background", "--factory-startup", "--python", "blender/iss_blender_production_worker.py", "--", "--job", str(JOB_FILE), "--assets", str(ASSET_MAP_FILE), "--output", str(OUTPUT), "--result", str(RESULT_FILE)]
-    log("BLENDER_CHILD_START", command="blender --background ...", workerVersion=WORKER_VERSION)
+    log("BLENDER_CHILD_START", workerVersion=WORKER_VERSION)
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
     last_heartbeat = time.monotonic()
     stdout_tail = []
@@ -205,7 +226,7 @@ except Exception as exc:
     log("BLENDER_PRODUCTION_JOB_FAIL", jobId=job_id, error=str(exc))
     if job_id and worker_id:
         try:
-            control("complete", jobId=job_id, workerId=worker_id, success=False, result={"engine":"BLENDER","engineVersion":"4.5.13","workerVersion":WORKER_VERSION,"error":str(exc)[:1800]})
+            control("complete", jobId=job_id, workerId=worker_id, success=False, result={"engine":"BLENDER","engineVersion":ENGINE_VERSION,"workerVersion":WORKER_VERSION,"error":str(exc)[:1800]})
         except Exception as close_exc:
             log("BLENDER_JOB_FAIL_CLOSE_ERROR", error=str(close_exc))
     raise
