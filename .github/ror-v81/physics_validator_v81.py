@@ -25,12 +25,14 @@ if max(t['aspeed'] for t in drive)<1.0: raise SystemExit('PLAYER_SPEED_FAIL')
 if max(t['contactBreaks'] for t in tele)<1: raise SystemExit('QUALIFIED_CONTACT_DAMAGE_FAIL')
 if max(t['breaks'] for t in tele)<1: raise SystemExit('BEAM_BREAK_FAIL')
 if max(t['resets'] for t in tele)!=0 or max(t['teleports'] for t in tele)!=0: raise SystemExit('FORBIDDEN_LIFECYCLE_EVENT_FAIL')
+
 node_pat=re.compile(r'ISS_NODE label=(BASE1|BASE2|STAGE1|STAGE2|IMPACT|POST) actor=([AB]) idx=(\d+) x=([-+0-9.eE]+) y=([-+0-9.eE]+) z=([-+0-9.eE]+)')
 nodes={}
 for m in node_pat.finditer(text):
     label,actor,idx,x,y,z=m.groups(); nodes.setdefault((label,actor),{})[int(idx)]=(float(x),float(y),float(z))
 for label,actor in [('BASE1','A'),('BASE2','A'),('STAGE1','B'),('STAGE2','B'),('POST','A'),('POST','B')]:
     if len(nodes.get((label,actor),{}))<4: raise SystemExit(f'NODE_SNAPSHOT_MISSING {label} {actor}')
+
 def signature(d):
     ids=sorted(d)
     if len(ids)>14: ids=sorted(set(ids[round(i*(len(ids)-1)/13)] for i in range(14)))
@@ -38,11 +40,13 @@ def signature(d):
     for i,a in enumerate(ids):
         for b in ids[i+1:]: out.append(math.dist(d[a],d[b]))
     return out
+
 def delta(a,b):
     sa,sb=signature(a),signature(b)
     if len(sa)!=len(sb) or not sa: raise SystemExit('SIGNATURE_SHAPE_FAIL')
     ds=[abs(x-y) for x,y in zip(sa,sb)]
     return max(ds),math.sqrt(sum(d*d for d in ds)/len(ds))
+
 checks=[]
 for actor,noise_pair,post_pair in [
     ('A',(('BASE1','A'),('BASE2','A')),(('BASE2','A'),('POST','A'))),
