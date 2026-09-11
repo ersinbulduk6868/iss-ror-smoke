@@ -1,13 +1,14 @@
 import bpy
 import json
-import math
 import os
 from mathutils import Vector
 
 BLENDER_VERSION = "4.5.13"
 FPS = 24
-FRAME_START = 1
-FRAME_END = 72
+SIM_FRAME_START = 1
+SIM_FRAME_END = 72
+RENDER_FRAME_START = 25
+RENDER_FRAME_END = 48
 ROOT = os.path.abspath(os.getcwd())
 ARTIFACTS = os.path.join(ROOT, "artifacts")
 VIDEO = os.path.join(ARTIFACTS, "blender_smoke.mp4")
@@ -43,21 +44,20 @@ def add_rigid_body(obj, body_type="ACTIVE", mass=1.0, kinematic=False):
         obj.rigid_body.kinematic = kinematic
 
 
-def look_at(camera, point):
-    direction = Vector(point) - camera.location
-    camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+def look_at(obj, point):
+    direction = Vector(point) - obj.location
+    obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
 
 
-# Clean factory scene.
 bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete(use_global=False)
 scene = bpy.context.scene
-scene.frame_start = FRAME_START
-scene.frame_end = FRAME_END
+scene.frame_start = SIM_FRAME_START
+scene.frame_end = SIM_FRAME_END
 scene.render.fps = FPS
 scene.render.engine = "BLENDER_EEVEE_NEXT"
-scene.render.resolution_x = 640
-scene.render.resolution_y = 360
+scene.render.resolution_x = 320
+scene.render.resolution_y = 180
 scene.render.resolution_percentage = 50
 scene.render.image_settings.file_format = "FFMPEG"
 scene.render.ffmpeg.format = "MPEG4"
@@ -66,15 +66,12 @@ scene.render.ffmpeg.constant_rate_factor = "MEDIUM"
 scene.render.filepath = VIDEO
 scene.world.color = (0.035, 0.035, 0.035)
 
-# Ground.
 ground = add_box("ground", (0.0, 0.0, -0.25), (16.0, 8.0, 0.5))
 add_rigid_body(ground, body_type="PASSIVE")
 
-# Dynamic target vehicle proxy.
 target = add_box("target_vehicle", (0.0, 0.0, 0.55), (2.2, 1.2, 1.1))
 add_rigid_body(target, body_type="ACTIVE", mass=1800.0, kinematic=False)
 
-# Visible dent shape. It is enabled only after a real physics displacement has been observed.
 target.shape_key_add(name="Basis")
 dent = target.shape_key_add(name="ImpactDent")
 for v in dent.data:
@@ -86,7 +83,6 @@ dent.keyframe_insert(data_path="value", frame=29)
 dent.value = 1.0
 dent.keyframe_insert(data_path="value", frame=31)
 
-# Kinematic attacker vehicle proxy. Motion is continuous; no teleport/reset occurs.
 attacker = add_box("attacker_vehicle", (-4.5, 0.0, 0.55), (2.2, 1.2, 1.1))
 add_rigid_body(attacker, body_type="ACTIVE", mass=1450.0, kinematic=True)
 scene.frame_set(1)
@@ -100,38 +96,37 @@ for fc in attacker.animation_data.action.fcurves:
     for kp in fc.keyframe_points:
         kp.interpolation = "LINEAR"
 
-# Camera and light.
 bpy.ops.object.camera_add(location=(7.5, -10.5, 5.0))
 camera = bpy.context.object
 camera.name = "battle_camera"
 look_at(camera, (0.0, 0.0, 0.6))
 scene.camera = camera
+
 bpy.ops.object.light_add(type="AREA", location=(1.0, -2.0, 7.0))
 key = bpy.context.object
 key.data.energy = 1800.0
 key.data.shape = "DISK"
 key.data.size = 6.0
+
 bpy.ops.object.light_add(type="AREA", location=(-4.0, 4.0, 3.0))
 fill = bpy.context.object
 fill.data.energy = 900.0
 fill.data.size = 5.0
 look_at(fill, (0.0, 0.0, 0.5))
 
-# Configure the single persistent rigid-body world.
 if scene.rigidbody_world is None:
     bpy.context.view_layer.objects.active = target
     bpy.ops.rigidbody.world_add()
-scene.rigidbody_world.point_cache.frame_start = FRAME_START
-scene.rigidbody_world.point_cache.frame_end = FRAME_END
+scene.rigidbody_world.point_cache.frame_start = SIM_FRAME_START
+scene.rigidbody_world.point_cache.frame_end = SIM_FRAME_END
 scene.rigidbody_world.substeps_per_frame = 10
 scene.rigidbody_world.solver_iterations = 20
 
-# Advance the same world from start to finish and prove the target moved because of contact.
-scene.frame_set(FRAME_START)
+scene.frame_set(SIM_FRAME_START)
 start = target.matrix_world.translation.copy()
 max_displacement = 0.0
 sampled = []
-for frame in range(FRAME_START, FRAME_END + 1):
+for frame in range(SIM_FRAME_START, SIM_FRAME_END + 1):
     scene.frame_set(frame)
     bpy.context.view_layer.update()
     pos = target.matrix_world.translation.copy()
@@ -144,15 +139,18 @@ collision_observed = max_displacement > 0.08
 if not collision_observed:
     raise RuntimeError(f"BLENDER_COLLISION_NOT_OBSERVED max_displacement={max_displacement:.6f}")
 
-# Damage is allowed only because the physical collision gate above passed.
-visible_damage_applied = collision_observed
-scene.frame_set(FRAME_END)
-persistent_world_state = (target.matrix_world.translation - start).length > 0.08 and dent.value > 0.99
+scene.frame_set(SIM_FRAME_END)
+visible_damage_applied = dent.value > 0.99 and collision_observed
+persistent_world_state = (target.matrix_world.translation - start).length > 0.08 and visible_damage_applied
+if not visible_damage_applied:
+    raise RuntimeError("BLENDER_VISIBLE_DAMAGE_GATE_FAILED")
 if not persistent_world_state:
     raise RuntimeError("BLENDER_PERSISTENCE_GATE_FAILED")
 
-# Render the same continuous world.
-scene.frame_set(FRAME_START)
+# Render only the impact window. The physics/world proof above still covers the full 72-frame continuous simulation.
+scene.frame_start = RENDER_FRAME_START
+scene.frame_end = RENDER_FRAME_END
+scene.frame_set(RENDER_FRAME_START)
 bpy.ops.render.render(animation=True)
 render_completed = os.path.isfile(VIDEO) and os.path.getsize(VIDEO) > 0
 if not render_completed:
@@ -172,10 +170,11 @@ result = {
     "persistentWorldState": persistent_world_state,
     "renderCompleted": render_completed,
     "maxTargetDisplacementMeters": round(max_displacement, 6),
-    "frames": FRAME_END - FRAME_START + 1,
+    "simulationFrames": SIM_FRAME_END - SIM_FRAME_START + 1,
+    "renderedFrames": RENDER_FRAME_END - RENDER_FRAME_START + 1,
     "fps": FPS,
     "samples": sampled,
-    "notes": "Synthetic two-actor engine smoke. Does not claim production asset, debris, Story-event or full Battle Executor acceptance."
+    "notes": "Synthetic two-actor engine smoke. Full 72-frame persistent simulation; impact-window EEVEE render only. Does not claim production asset, debris, Story-event or full Battle Executor acceptance."
 }
 with open(RESULT, "w", encoding="utf-8") as f:
     json.dump(result, f, indent=2, sort_keys=True)

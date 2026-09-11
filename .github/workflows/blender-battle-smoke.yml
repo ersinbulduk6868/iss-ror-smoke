@@ -9,6 +9,10 @@ on:
       - 'blender/**'
       - 'README.md'
 
+concurrency:
+  group: iss-blender-battle-backend-smoke
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -20,7 +24,7 @@ jobs:
   blender-smoke:
     name: Headless rigid-body collision and render smoke
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 12
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
