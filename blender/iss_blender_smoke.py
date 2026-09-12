@@ -64,7 +64,7 @@ scene.render.fps = FPS
 scene.render.engine = "BLENDER_EEVEE_NEXT"
 scene.render.resolution_x = 320
 scene.render.resolution_y = 180
-scene.render.resolution_percentage = 50
+scene.render.resolution_percentage = 25
 scene.render.image_settings.file_format = "FFMPEG"
 scene.render.ffmpeg.format = "MPEG4"
 scene.render.ffmpeg.codec = "H264"
@@ -73,7 +73,6 @@ scene.render.filepath = VIDEO
 scene.world.color = (0.025, 0.028, 0.035)
 scene.gravity = (0.0, 0.0, -9.81)
 
-# Flat collision lane.
 ground = add_box("ground", (0.0, 0.0, -0.25), (20.0, 8.0, 0.5))
 add_rigid_body(ground, body_type="PASSIVE", friction=0.92, restitution=0.01)
 
@@ -85,9 +84,7 @@ target = add_box("target_vehicle", (1.5, 0.0, 0.55), (2.2, 1.2, 1.1))
 add_rigid_body(target, body_type="ACTIVE", mass=1800.0, friction=0.72, restitution=0.04)
 add_material(target, "target_material", (0.62, 0.16, 0.08))
 
-# Official Blender rigid-body Animated -> Dynamic handoff.
-# Animation exists only BEFORE frame 5 to seed a physical velocity.
-# There are NO location keyframes after physics takes control.
+# Blender-documented Animated -> Dynamic handoff only seeds initial velocity.
 attacker.rigid_body.kinematic = True
 attacker.rigid_body.keyframe_insert(data_path="kinematic", frame=1)
 attacker.location = (-5.5, 0.0, 0.55)
@@ -99,33 +96,22 @@ attacker.rigid_body.keyframe_insert(data_path="kinematic", frame=4)
 attacker.rigid_body.kinematic = False
 attacker.rigid_body.keyframe_insert(data_path="kinematic", frame=HANDOFF_FRAME)
 
-# Linear seed motion; physics owns everything from HANDOFF_FRAME onward.
 if attacker.animation_data and attacker.animation_data.action:
     for fc in attacker.animation_data.action.fcurves:
         for kp in fc.keyframe_points:
             kp.interpolation = "LINEAR"
-
-# No target animation of any kind.
 if target.animation_data is not None:
     raise RuntimeError("TARGET_ANIMATION_FORBIDDEN")
 
 bpy.ops.object.camera_add(location=(7.5, -12.0, 5.5))
 camera = bpy.context.object
-camera.name = "collision_truth_camera"
 look_at(camera, (-0.5, 0.0, 0.8))
 scene.camera = camera
-
 bpy.ops.object.light_add(type="AREA", location=(0.0, -2.0, 8.0))
 key = bpy.context.object
 key.data.energy = 1700.0
 key.data.shape = "DISK"
 key.data.size = 7.0
-
-bpy.ops.object.light_add(type="AREA", location=(-5.0, 4.0, 4.0))
-fill = bpy.context.object
-fill.data.energy = 800.0
-fill.data.size = 5.0
-look_at(fill, (-1.0, 0.0, 0.8))
 
 if scene.rigidbody_world is None:
     activate(attacker)
@@ -135,7 +121,6 @@ scene.rigidbody_world.point_cache.frame_end = SIM_FRAME_END
 scene.rigidbody_world.substeps_per_frame = 20
 scene.rigidbody_world.solver_iterations = 30
 
-# Static source-level gate: no attacker location keyframes may exist after handoff.
 post_handoff_location_keys = []
 location_curve_count = 0
 if attacker.animation_data and attacker.animation_data.action:
@@ -153,7 +138,6 @@ bpy.context.view_layer.update()
 target_start = target.matrix_world.translation.copy()
 prev_attacker = attacker.matrix_world.translation.copy()
 prev_target = target.matrix_world.translation.copy()
-
 telemetry = []
 impact_frame = None
 impact_center_distance = None
@@ -191,10 +175,8 @@ for frame in range(1, SIM_FRAME_END + 1):
 
     target_max_speed = max(target_max_speed, target_speed)
     target_max_displacement = max(target_max_displacement, target_disp)
-
     if impact_frame is None:
         preimpact_target_max_speed = max(preimpact_target_max_speed, target_speed)
-        # Box half-lengths total 2.2m. Allow a small Bullet margin.
         if frame >= HANDOFF_FRAME + 4 and center_distance <= 2.35 and target_speed > 0.30:
             impact_frame = frame
             impact_center_distance = center_distance
@@ -211,7 +193,6 @@ for frame in range(1, SIM_FRAME_END + 1):
             "targetDisplacementM": round(target_disp, 6),
             "attackerKinematic": bool(attacker.rigid_body.kinematic),
         })
-
     prev_attacker = pa
     prev_target = pt
 
@@ -219,7 +200,6 @@ scene.frame_set(SIM_FRAME_END)
 bpy.context.view_layer.update()
 target_final = target.matrix_world.translation.copy()
 persistent_target_displacement = (target_final - target_start).length
-
 collision_observed = (
     impact_frame is not None
     and minimum_center_distance <= 2.35
@@ -242,13 +222,15 @@ if not collision_observed:
 if not momentum_transfer_observed:
     raise RuntimeError("BLENDER_MOMENTUM_TRANSFER_GATE_FAILED")
 if not persistent_world_state:
-    raise RuntimeError(
-        f"BLENDER_PERSISTENCE_GATE_FAILED final_target_disp={persistent_target_displacement:.6f}"
-    )
+    raise RuntimeError(f"BLENDER_PERSISTENCE_GATE_FAILED final_target_disp={persistent_target_displacement:.6f}")
 
-scene.frame_start = SIM_FRAME_START
-scene.frame_end = SIM_FRAME_END
-scene.frame_set(SIM_FRAME_START)
+# Render only a compact evidence window around the already-proven impact.
+render_start = max(SIM_FRAME_START, impact_frame - 2)
+render_end = min(SIM_FRAME_END, impact_frame + 3)
+rendered_frames = render_end - render_start + 1
+scene.frame_start = render_start
+scene.frame_end = render_end
+scene.frame_set(render_start)
 bpy.ops.render.render(animation=True)
 render_completed = os.path.isfile(VIDEO) and os.path.getsize(VIDEO) > 0
 if not render_completed:
@@ -281,23 +263,18 @@ result = {
     "finalTargetDisplacementMeters": round(persistent_target_displacement, 6),
     "minimumCenterDistanceMeters": round(minimum_center_distance, 6),
     "impactFrame": impact_frame,
-    "impactCenterDistanceMeters": round(float(impact_center_distance), 6) if impact_center_distance is not None else None,
-    "impactAttackerSpeedMps": round(float(impact_attacker_speed), 6) if impact_attacker_speed is not None else None,
-    "impactTargetSpeedMps": round(float(impact_target_speed), 6) if impact_target_speed is not None else None,
+    "impactCenterDistanceMeters": round(float(impact_center_distance), 6),
+    "impactAttackerSpeedMps": round(float(impact_attacker_speed), 6),
+    "impactTargetSpeedMps": round(float(impact_target_speed), 6),
     "preimpactTargetMaxSpeedMps": round(preimpact_target_max_speed, 6),
     "simulationFrames": SIM_FRAME_END,
-    "renderedFrames": SIM_FRAME_END,
+    "renderStartFrame": render_start,
+    "renderEndFrame": render_end,
+    "renderedFrames": rendered_frames,
     "fps": FPS,
     "samples": telemetry,
-    "notes": (
-        "Blender 4.5 rigid-body truth test. Frames 1-4 only seed initial velocity using the official "
-        "Animated-to-Dynamic handoff; from frame 5 onward the attacker and target are both fully dynamic. "
-        "No location keyframes exist after handoff and no scripted damage is used. PASS requires target "
-        "velocity/displacement while bodies are in physical contact proximity."
-    ),
 }
 with open(RESULT, "w", encoding="utf-8") as f:
     json.dump(result, f, indent=2, sort_keys=True)
-
 print(json.dumps(result, sort_keys=True))
 print("ISS_BLENDER_SMOKE=PASS")

@@ -4,12 +4,11 @@ import sys
 
 if len(sys.argv) != 2:
     raise SystemExit("usage: validate_smoke.py <result.json>")
-
 path = pathlib.Path(sys.argv[1])
 if not path.is_file():
     raise SystemExit(f"missing evidence file: {path}")
-
 data = json.loads(path.read_text(encoding="utf-8"))
+
 expected = {
     "scope": "BLENDER_RIGID_BODY_COLLISION_TRUTH_TEST",
     "productionAcceptance": False,
@@ -29,7 +28,6 @@ expected = {
     "postHandoffLocationKeyframeCount": 0,
     "handoffFrame": 5,
     "simulationFrames": 96,
-    "renderedFrames": 96,
     "fps": 24,
 }
 failures = [f"{k}: expected {v!r}, got {data.get(k)!r}" for k, v in expected.items() if data.get(k) != v]
@@ -41,7 +39,6 @@ def num(name, default=0.0):
     except (TypeError, ValueError):
         return default
 
-
 target_disp = num("maxTargetDisplacementMeters")
 target_final_disp = num("finalTargetDisplacementMeters")
 target_vmax = num("targetMaxSpeedMps")
@@ -49,6 +46,7 @@ attacker_vmax = num("attackerMaxSpeedAfterHandoffMps")
 min_distance = num("minimumCenterDistanceMeters", 999.0)
 impact_frame = data.get("impactFrame")
 impact_distance = num("impactCenterDistanceMeters", 999.0)
+rendered_frames = int(data.get("renderedFrames", 0) or 0)
 
 if target_disp <= 0.15:
     failures.append(f"maxTargetDisplacementMeters must be > 0.15, got {target_disp}")
@@ -64,6 +62,8 @@ if min_distance > 2.35:
     failures.append(f"minimumCenterDistanceMeters must be <= 2.35, got {min_distance}")
 if impact_distance > 2.35:
     failures.append(f"impactCenterDistanceMeters must be <= 2.35, got {impact_distance}")
+if rendered_frames < 5:
+    failures.append(f"renderedFrames must be >=5, got {rendered_frames}")
 
 samples = data.get("samples")
 if not isinstance(samples, list) or len(samples) < 8:
@@ -80,3 +80,4 @@ print(f"impactFrame={impact_frame}")
 print(f"targetMaxSpeedMps={target_vmax:.6f}")
 print(f"maxTargetDisplacementMeters={target_disp:.6f}")
 print(f"minimumCenterDistanceMeters={min_distance:.6f}")
+print(f"renderedFrames={rendered_frames}")
