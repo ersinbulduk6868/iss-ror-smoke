@@ -11,6 +11,8 @@ FPS = 24
 SIM_START = 1
 SIM_END = 144  # 6 seconds continuous physics
 HANDOFF_FRAME = 5
+HYPERCAR_MASS_KG = 1450.0
+BULLDOZER_MASS_KG = 27614.189525707065
 
 
 def parse_args():
@@ -36,7 +38,7 @@ def activate(obj):
     bpy.context.view_layer.objects.active = obj
 
 
-def import_glb(path):
+def import_model(path):
     before = set(bpy.data.objects)
     bpy.ops.import_scene.gltf(filepath=str(path))
     imported = [o for o in bpy.data.objects if o not in before]
@@ -67,7 +69,7 @@ def add_active_rigid_body(obj, mass, friction, restitution):
 
 
 def build_actor(name, path, desired_x, mass, friction):
-    imported, meshes = import_glb(path)
+    imported, meshes = import_model(path)
     mn, mx = bounds(meshes)
     dims = mx - mn
     center = (mn + mx) * 0.5
@@ -159,8 +161,8 @@ ground.rigid_body.type = "PASSIVE"
 ground.rigid_body.collision_shape = "BOX"
 ground.rigid_body.friction = 0.92
 
-hypercar = build_actor("HYPERCAR", Path(a.hypercar), -12.0, 1450.0, 0.22)
-bulldozer = build_actor("BULLDOZER", Path(a.bulldozer), 0.0, 12000.0, 0.78)
+hypercar = build_actor("HYPERCAR", Path(a.hypercar), -12.0, HYPERCAR_MASS_KG, 0.22)
+bulldozer = build_actor("BULLDOZER", Path(a.bulldozer), 0.0, BULLDOZER_MASS_KG, 0.78)
 
 # Initial velocity seed only. From frame 5 onward the hypercar is fully dynamic.
 p = hypercar["proxy"]
@@ -179,7 +181,6 @@ if p.animation_data and p.animation_data.action:
         for kp in fc.keyframe_points:
             kp.interpolation = "LINEAR"
 
-# No scripted motion after handoff.
 post_handoff_keys = []
 if p.animation_data and p.animation_data.action:
     for fc in p.animation_data.action.fcurves:
@@ -271,7 +272,7 @@ final_b_disp = (final_b - b_start).length
 
 collision_observed = impact_frame is not None
 momentum_transfer_observed = b_max_speed > 0.05 and b_max_disp > 0.02
-mass_asymmetry_plausible = b_max_speed < max(preimpact_car_speed * 0.5, 0.1)
+mass_asymmetry_plausible = b_max_speed < max(preimpact_car_speed * 0.35, 0.1)
 car_lost_speed = postimpact_car_speed_min is not None and postimpact_car_speed_min < preimpact_car_speed * 0.75
 persistent_outcome = final_b_disp > 0.02
 
@@ -286,7 +287,7 @@ if not car_lost_speed:
 if not persistent_outcome:
     raise RuntimeError(f"OUTCOME_NOT_PERSISTENT finalBulldozerDisp={final_b_disp:.4f}")
 
-# Render the full 6-second outcome, not just the impact instant.
+# Full six seconds: approach, impact and aftermath stay visible.
 scene.frame_start = SIM_START
 scene.frame_end = SIM_END
 scene.frame_set(SIM_START)
@@ -321,9 +322,9 @@ result = {
     "finalBulldozerDisplacementMeters": round(final_b_disp, 6),
     "finalHypercarPosition": [round(x, 6) for x in final_h],
     "finalBulldozerPosition": [round(x, 6) for x in final_b],
-    "hypercarMassKg": 1450.0,
-    "bulldozerMassKg": 12000.0,
-    "massRatioBulldozerToCar": round(12000.0 / 1450.0, 6),
+    "hypercarMassKg": HYPERCAR_MASS_KG,
+    "bulldozerMassKg": BULLDOZER_MASS_KG,
+    "massRatioBulldozerToCar": round(BULLDOZER_MASS_KG / HYPERCAR_MASS_KG, 6),
     "hypercarMeshCount": hypercar["meshCount"],
     "bulldozerMeshCount": bulldozer["meshCount"],
     "hypercarSha256": sha256(a.hypercar),
