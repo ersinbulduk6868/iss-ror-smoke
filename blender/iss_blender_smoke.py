@@ -63,7 +63,7 @@ scene.frame_end = SIM_FRAME_END
 scene.render.fps = FPS
 scene.render.engine = "BLENDER_EEVEE_NEXT"
 scene.render.resolution_x = 320
-scene.render.resolution_y = 180
+scene.render.resolution_y = 192
 scene.render.resolution_percentage = 25
 scene.render.image_settings.file_format = "FFMPEG"
 scene.render.ffmpeg.format = "MPEG4"
@@ -72,6 +72,13 @@ scene.render.ffmpeg.constant_rate_factor = "MEDIUM"
 scene.render.filepath = VIDEO
 scene.world.color = (0.025, 0.028, 0.035)
 scene.gravity = (0.0, 0.0, -9.81)
+
+render_width = round(scene.render.resolution_x * scene.render.resolution_percentage / 100.0)
+render_height = round(scene.render.resolution_y * scene.render.resolution_percentage / 100.0)
+if render_width <= 0 or render_height <= 0:
+    raise RuntimeError(f"RENDER_DIMENSION_INVALID {render_width}x{render_height}")
+if (render_width % 2) != 0 or (render_height % 2) != 0:
+    raise RuntimeError(f"H264_EVEN_DIMENSION_GATE_FAILED {render_width}x{render_height}")
 
 ground = add_box("ground", (0.0, 0.0, -0.25), (20.0, 8.0, 0.5))
 add_rigid_body(ground, body_type="PASSIVE", friction=0.92, restitution=0.01)
@@ -271,6 +278,9 @@ result = {
     "renderStartFrame": render_start,
     "renderEndFrame": render_end,
     "renderedFrames": rendered_frames,
+    "renderWidth": render_width,
+    "renderHeight": render_height,
+    "h264EvenDimensionsVerified": True,
     "fps": FPS,
     "samples": telemetry,
 }
