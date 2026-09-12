@@ -1,0 +1,129 @@
+name: ISS Blender real-model collision outcome
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-real-model-collision.yml'
+      - 'blender/real_model_collision_test.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iss-blender-real-model-collision
+  cancel-in-progress: true
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+  HYPERCAR_URL: 'https://raw.githubusercontent.com/ersinbulduk6868/iss-ror-smoke/fc84e9db191b56cb1461023d39b7f55a94c150b3/assets/generated/generic-hypercar-v1/generic_hypercar.glb'
+  HYPERCAR_SHA256: '0b2710a840d128aee53161277edb8cb77e1930d339f53585c6faece3f1dc2b1c'
+  BULLDOZER_URL: 'https://storage.googleapis.com/iss-nvidia-260825114007-outputs/asset-library/v1/source/sketchfab/b06a715d23a7450babac383b8bb7fb0a/original/visual_master.glb'
+  BULLDOZER_SHA256: '2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468'
+
+jobs:
+  real-model-collision:
+    name: Real hypercar vs bulldozer collision outcome
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" blender-version.txt
+
+      - name: Download and verify real model assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/assets artifacts/real-model
+          curl --fail --location --retry 3 --retry-all-errors "$HYPERCAR_URL" -o artifacts/assets/hypercar.glb
+          curl --fail --location --retry 3 --retry-all-errors "$BULLDOZER_URL" -o artifacts/assets/bulldozer.glb
+          echo "$HYPERCAR_SHA256  artifacts/assets/hypercar.glb" | sha256sum -c -
+          echo "$BULLDOZER_SHA256  artifacts/assets/bulldozer.glb" | sha256sum -c -
+          test -s artifacts/assets/hypercar.glb
+          test -s artifacts/assets/bulldozer.glb
+          echo 'REAL_MODEL_ASSETS=PASS'
+
+      - name: Run six-second real-model collision outcome
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup --python blender/real_model_collision_test.py -- \
+            --hypercar artifacts/assets/hypercar.glb \
+            --bulldozer artifacts/assets/bulldozer.glb \
+            --output artifacts/real-model/hypercar-vs-bulldozer.mp4 \
+            --result artifacts/real-model/result.json \
+            2>&1 | tee artifacts/real-model/runtime.log
+          grep -F 'ISS_REAL_MODEL_COLLISION_OUTCOME=PASS' artifacts/real-model/runtime.log
+
+      - name: Validate collision outcome evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          p='artifacts/real-model/result.json'
+          d=json.load(open(p,encoding='utf-8'))
+          required={
+            'scope':'ISS_REAL_MODEL_COLLISION_OUTCOME_TEST',
+            'engine':'BLENDER',
+            'engineVersion':'4.5.13',
+            'physicsBackend':'BLENDER_RIGID_BODY',
+            'continuousWorld':True,
+            'collisionObserved':True,
+            'momentumTransferObserved':True,
+            'massAsymmetryPlausible':True,
+            'carLostSpeedAfterImpact':True,
+            'persistentOutcome':True,
+            'scriptedDamageUsed':False,
+            'dynamicBeforeImpact':True,
+            'postHandoffLocationKeyframeCount':0,
+          }
+          bad=[f'{k}: expected {v!r}, got {d.get(k)!r}' for k,v in required.items() if d.get(k)!=v]
+          if float(d.get('simulationSeconds',0)) < 5.9: bad.append('simulation shorter than six seconds')
+          if int(d.get('impactFrame',0)) <= 5: bad.append('impact occurred before dynamic handoff')
+          if float(d.get('bulldozerMaxSpeedMps',0)) <= 0.05: bad.append('bulldozer momentum response missing')
+          if float(d.get('finalBulldozerDisplacementMeters',0)) <= 0.02: bad.append('persistent outcome missing')
+          if bad:
+            print('ISS_REAL_MODEL_EVIDENCE=FAIL')
+            raise SystemExit('\n'.join(bad))
+          print('ISS_REAL_MODEL_EVIDENCE=PASS')
+          print(json.dumps({k:d.get(k) for k in ['impactFrame','impactTimeSeconds','preImpactCarMaxSpeedMps','impactCarSpeedMps','impactBulldozerSpeedMps','bulldozerMaxSpeedMps','finalBulldozerDisplacementMeters','massRatioBulldozerToCar']},indent=2))
+          PY
+          duration="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 artifacts/real-model/hypercar-vs-bulldozer.mp4)"
+          echo "videoDuration=$duration"
+          python3 - "$duration" <<'PY'
+          import sys
+          if float(sys.argv[1]) < 5.9:
+              raise SystemExit('REAL_MODEL_VIDEO_TOO_SHORT')
+          PY
+          echo 'ISS_REAL_MODEL_VIDEO=PASS'
+
+      - name: Upload real-model collision evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-real-model-collision-outcome-${{ github.run_id }}
+          path: artifacts/real-model/
+          if-no-files-found: warn
+          retention-days: 7
