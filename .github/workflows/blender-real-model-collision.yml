@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/blender-real-model-collision.yml'
       - 'blender/real_model_collision_test.py'
+      - 'blender/run_real_model_collision_wrapper.py'
       - 'assets/test-real-model/**'
 
 permissions:
@@ -73,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
-          "$BIN" --background --factory-startup --python blender/real_model_collision_test.py -- \
+          "$BIN" --background --factory-startup --python blender/run_real_model_collision_wrapper.py -- \
             --hypercar-quant assets/test-real-model/bugatti_quant120.json \
             --bulldozer-quant assets/test-real-model/bulldozer_quant120.json \
             --output artifacts/real-model/bugatti-vs-bulldozer.mp4 \
