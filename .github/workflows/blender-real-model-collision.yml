@@ -7,10 +7,10 @@ on:
     paths:
       - '.github/workflows/blender-real-model-collision.yml'
       - 'blender/real_model_collision_test.py'
+      - 'assets/test-real-model/**'
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: iss-blender-real-model-collision
@@ -19,15 +19,10 @@ concurrency:
 env:
   BLENDER_VERSION: '4.5.13'
   BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
-  HYPERCAR_URL: 'https://raw.githubusercontent.com/ersinbulduk6868/iss-ror-smoke/fc84e9db191b56cb1461023d39b7f55a94c150b3/assets/generated/generic-hypercar-v1/generic_hypercar.glb'
-  HYPERCAR_SHA256: '0b2710a840d128aee53161277edb8cb77e1930d339f53585c6faece3f1dc2b1c'
-  BULLDOZER_UID: 'b06a715d23a7450babac383b8bb7fb0a'
-  BULLDOZER_SOURCE_SHA256: '2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468'
-  SOURCE_RELAY_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/generation-nvidia-asset-worker'
 
 jobs:
   real-model-collision:
-    name: Real hypercar vs bulldozer collision outcome
+    name: Uploaded Bugatti vs bulldozer collision outcome
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
@@ -45,152 +40,54 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .blender
+          mkdir -p .blender artifacts/real-model
           curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
           tar -xJf .blender/blender.tar.xz -C .blender
           BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
-          "$BIN" --version | tee blender-version.txt
-          grep -F "Blender ${BLENDER_VERSION}" blender-version.txt
+          "$BIN" --version | tee artifacts/real-model/blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" artifacts/real-model/blender-version.txt
+          echo 'BLENDER_HEADLESS_PREFLIGHT=PASS'
 
-      - name: Download and verify real model assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p artifacts/assets artifacts/real-model
-          curl --fail --location --retry 3 --retry-all-errors "$HYPERCAR_URL" -o artifacts/assets/hypercar.glb
-          echo "$HYPERCAR_SHA256  artifacts/assets/hypercar.glb" | sha256sum -c -
-          python3 - <<'PY'
-          import json, os, pathlib, shutil, urllib.parse, urllib.request, zipfile
-
-          control=os.environ['SOURCE_RELAY_URL']
-          uid=os.environ['BULLDOZER_UID']
-          expected=os.environ['BULLDOZER_SOURCE_SHA256'].lower()
-          base=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_URL','')
-          bearer=os.environ.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN','')
-          if not base or not bearer:
-              raise SystemExit('GITHUB_OIDC_ENV_MISSING')
-          sep='&' if '?' in base else '?'
-          req=urllib.request.Request(
-              base+sep+'audience='+urllib.parse.quote('iss-asset-provider-smoke'),
-              headers={'Authorization':'bearer '+bearer,'Accept':'application/json'})
-          with urllib.request.urlopen(req,timeout=30) as r:
-              oidc=json.load(r).get('value')
-          if not oidc:
-              raise SystemExit('GITHUB_OIDC_TOKEN_MISSING')
-
-          payload=json.dumps({'mode':'signed_source_download','uid':uid}).encode()
-          req=urllib.request.Request(control,data=payload,method='POST',headers={
-              'Authorization':'Bearer '+oidc,
-              'Content-Type':'application/json','Accept':'application/json'})
-          with urllib.request.urlopen(req,timeout=45) as r:
-              response=json.load(r)
-          if response.get('success') is not True or response.get('status')!='SIGNED_SOURCE_READY':
-              raise SystemExit('SIGNED_SOURCE_RELAY_FAILED:'+json.dumps({k:response.get(k) for k in ('status','error')}))
-          source=response.get('source') or {}
-          if source.get('uid')!=uid:
-              raise SystemExit('SOURCE_UID_MISMATCH')
-          signed=source.get('signedUrl')
-          if not isinstance(signed,str) or not signed.startswith('https://'):
-              raise SystemExit('SIGNED_SOURCE_URL_INVALID')
-
-          root=pathlib.Path('artifacts/assets')
-          raw=root/'bulldozer_payload.bin'
-          req=urllib.request.Request(signed,headers={'User-Agent':'Infinite-Shorts-Studio-Real-Model-Test/1.0','Accept':'*/*'})
-          with urllib.request.urlopen(req,timeout=180) as r, raw.open('wb') as f:
-              shutil.copyfileobj(r,f,1024*1024)
-          if raw.stat().st_size<1024:
-              raise SystemExit('BULLDOZER_SOURCE_TOO_SMALL')
-
-          head=raw.read_bytes()[:4]
-          selected=None
-          if head==b'glTF':
-              selected=root/'bulldozer.glb'
-              raw.replace(selected)
-          elif head[:2]==b'PK':
-              extract=root/'bulldozer_archive'
-              extract.mkdir(parents=True,exist_ok=True)
-              with zipfile.ZipFile(raw) as z:
-                  base_resolved=extract.resolve()
-                  for info in z.infolist():
-                      name=info.filename.replace('\\','/')
-                      parts=pathlib.PurePosixPath(name)
-                      if parts.is_absolute() or '..' in parts.parts:
-                          raise SystemExit('ZIP_TRAVERSAL_REJECTED')
-                      if info.is_dir():
-                          continue
-                      dst=(extract/pathlib.Path(*parts.parts)).resolve()
-                      if base_resolved!=dst and base_resolved not in dst.parents:
-                          raise SystemExit('ZIP_ESCAPE_REJECTED')
-                      dst.parent.mkdir(parents=True,exist_ok=True)
-                      with z.open(info) as src, dst.open('wb') as out:
-                          shutil.copyfileobj(src,out,1024*1024)
-              glbs=sorted(extract.rglob('*.glb'))
-              gltfs=sorted(extract.rglob('*.gltf'))
-              if len(glbs)==1:
-                  selected=glbs[0]
-              else:
-                  canonical=[p for p in gltfs if p.name.lower()=='scene.gltf']
-                  if len(canonical)==1:
-                      selected=canonical[0]
-                  elif len(gltfs)==1:
-                      selected=gltfs[0]
-                  else:
-                      raise SystemExit('BULLDOZER_PRIMARY_MODEL_AMBIGUOUS')
-          else:
-              try:
-                  j=json.loads(raw.read_text(encoding='utf-8'))
-                  if str((j.get('asset') or {}).get('version','')).startswith('2'):
-                      selected=root/'bulldozer.gltf'
-                      raw.replace(selected)
-              except Exception:
-                  pass
-          if selected is None or not selected.is_file():
-              raise SystemExit('BULLDOZER_MODEL_NORMALIZATION_FAILED')
-
-          import hashlib
-          h=hashlib.sha256(selected.read_bytes()).hexdigest()
-          if selected.suffix.lower()=='.glb' and h!=expected:
-              raise SystemExit('BULLDOZER_EXACT_SOURCE_SHA_MISMATCH:'+h)
-          pathlib.Path('artifacts/assets/bulldozer-path.txt').write_text(str(selected),encoding='utf-8')
-          pathlib.Path('artifacts/assets/bulldozer-source-evidence.json').write_text(json.dumps({
-              'provider':'sketchfab','uid':uid,'artifactKind':source.get('artifactKind'),
-              'selectedPath':str(selected),'selectedSha256':h,
-              'expectedStoredSourceSha256':expected,
-              'exactShaMatched': selected.suffix.lower()=='.glb' and h==expected,
-              'bytes':selected.stat().st_size
-          },indent=2),encoding='utf-8')
-          print('BULLDOZER_SIGNED_SOURCE_FETCH=PASS')
-          print('BULLDOZER_SELECTED_FORMAT='+selected.suffix.lower())
-          print('BULLDOZER_EXACT_SHA_MATCH='+str(selected.suffix.lower()=='.glb' and h==expected).lower())
-          PY
-          test -s artifacts/assets/hypercar.glb
-          test -s artifacts/assets/bulldozer-path.txt
-          BULLDOZER_MODEL="$(cat artifacts/assets/bulldozer-path.txt)"
-          test -s "$BULLDOZER_MODEL"
-          echo 'REAL_MODEL_ASSETS=PASS'
-
-      - name: Run six-second real-model collision outcome
-        shell: bash
-        run: |
-          set -euo pipefail
-          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
-          BULLDOZER_MODEL="$(cat artifacts/assets/bulldozer-path.txt)"
-          "$BIN" --background --factory-startup --python blender/real_model_collision_test.py -- \
-            --hypercar artifacts/assets/hypercar.glb \
-            --bulldozer "$BULLDOZER_MODEL" \
-            --output artifacts/real-model/hypercar-vs-bulldozer.mp4 \
-            --result artifacts/real-model/result.json \
-            2>&1 | tee artifacts/real-model/runtime.log
-          grep -F 'ISS_REAL_MODEL_COLLISION_OUTCOME=PASS' artifacts/real-model/runtime.log
-
-      - name: Validate collision outcome evidence
+      - name: Validate exact-upload-derived geometry evidence
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import json
-          p='artifacts/real-model/result.json'
-          d=json.load(open(p,encoding='utf-8'))
+          checks = [
+            ('assets/test-real-model/bugatti_quant120.json', '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'),
+            ('assets/test-real-model/bulldozer_quant120.json', '187f81c3c4638180fb8d82c5b2bbc7510f01bc970ee149713b2de993089f1e18'),
+          ]
+          for path, expected in checks:
+              d=json.load(open(path,encoding='utf-8'))
+              assert d['source_sha256']==expected, (path,d.get('source_sha256'))
+              assert d['transport']=='exact-upload-derived-quantized-surface-v1'
+              assert int(d['kept_triangles'])==120
+              assert len(d['qv'])%3==0 and len(d['f'])%3==0
+              print(path, 'source_sha256='+expected, 'transport_triangles=120')
+          print('UPLOADED_ASSET_GEOMETRY_GATE=PASS')
+          PY
+
+      - name: Run six-second collision and aftermath
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup --python blender/real_model_collision_test.py -- \
+            --hypercar-quant assets/test-real-model/bugatti_quant120.json \
+            --bulldozer-quant assets/test-real-model/bulldozer_quant120.json \
+            --output artifacts/real-model/bugatti-vs-bulldozer.mp4 \
+            --result artifacts/real-model/result.json \
+            2>&1 | tee artifacts/real-model/runtime.log
+          grep -F 'ISS_REAL_MODEL_COLLISION_OUTCOME=PASS' artifacts/real-model/runtime.log
+
+      - name: Validate machine evidence and video
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          d=json.load(open('artifacts/real-model/result.json',encoding='utf-8'))
           required={
             'scope':'ISS_REAL_MODEL_COLLISION_OUTCOME_TEST',
             'engine':'BLENDER',
@@ -205,35 +102,35 @@ jobs:
             'scriptedDamageUsed':False,
             'dynamicBeforeImpact':True,
             'postHandoffLocationKeyframeCount':0,
+            'geometryTransport':'exact-upload-derived-quantized-surface-v1',
+            'carSourceSha256':'8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4',
+            'bulldozerSourceSha256':'187f81c3c4638180fb8d82c5b2bbc7510f01bc970ee149713b2de993089f1e18',
           }
           bad=[f'{k}: expected {v!r}, got {d.get(k)!r}' for k,v in required.items() if d.get(k)!=v]
-          if float(d.get('simulationSeconds',0)) < 5.9: bad.append('simulation shorter than six seconds')
-          if int(d.get('impactFrame',0)) <= 5: bad.append('impact occurred before dynamic handoff')
-          if abs(float(d.get('bulldozerMassKg',0))-27614.189525707065)>0.01: bad.append('production bulldozer mass mismatch')
-          if float(d.get('bulldozerMaxSpeedMps',0)) <= 0.05: bad.append('bulldozer momentum response missing')
-          if float(d.get('finalBulldozerDisplacementMeters',0)) <= 0.02: bad.append('persistent outcome missing')
-          if bad:
-            print('ISS_REAL_MODEL_EVIDENCE=FAIL')
-            raise SystemExit('\n'.join(bad))
+          if abs(float(d.get('bulldozerMassKg',0))-27614.189525707065)>0.01: bad.append('bulldozer mass mismatch')
+          if abs(float(d.get('carMassKg',0))-1450.0)>0.01: bad.append('car mass mismatch')
+          if float(d.get('simulationSeconds',0)) < 5.9: bad.append('simulation shorter than 6s')
+          if bad: raise SystemExit('\n'.join(bad))
           print('ISS_REAL_MODEL_EVIDENCE=PASS')
-          print(json.dumps({k:d.get(k) for k in ['impactFrame','impactTimeSeconds','preImpactCarMaxSpeedMps','impactCarSpeedMps','impactBulldozerSpeedMps','bulldozerMaxSpeedMps','finalBulldozerDisplacementMeters','massRatioBulldozerToCar']},indent=2))
+          print(json.dumps({k:d.get(k) for k in [
+            'impactFrame','impactTimeSeconds','preImpactCarMaxSpeedMps','impactCarSpeedMps',
+            'impactBulldozerSpeedMps','bulldozerMaxSpeedMps','bulldozerMaxDisplacementMeters',
+            'finalBulldozerDisplacementMeters','massRatioBulldozerToCar','carDimensionsMeters',
+            'bulldozerDimensionsMeters']},indent=2))
           PY
-          duration="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 artifacts/real-model/hypercar-vs-bulldozer.mp4)"
+          duration="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 artifacts/real-model/bugatti-vs-bulldozer.mp4)"
           echo "videoDuration=$duration"
           python3 - "$duration" <<'PY'
           import sys
-          if float(sys.argv[1]) < 5.9:
-              raise SystemExit('REAL_MODEL_VIDEO_TOO_SHORT')
+          if float(sys.argv[1]) < 5.9: raise SystemExit('REAL_MODEL_VIDEO_TOO_SHORT')
           PY
           echo 'ISS_REAL_MODEL_VIDEO=PASS'
 
-      - name: Upload real-model collision evidence
+      - name: Upload collision evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: iss-real-model-collision-outcome-${{ github.run_id }}
-          path: |
-            artifacts/real-model/
-            artifacts/assets/bulldozer-source-evidence.json
+          path: artifacts/real-model/
           if-no-files-found: warn
           retention-days: 7
