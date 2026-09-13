@@ -1,4 +1,4 @@
-name: ISS Blender visual vNext RC2 full-source preflight
+name: ISS Blender visual vNext RC2 Bugatti duel preflight
 
 on:
   workflow_dispatch:
@@ -7,18 +7,17 @@ on:
       - 'iss-test/visual-vnext-rc2-fullsource-preflight'
     paths:
       - '.github/workflows/blender-visual-vnext-rc2-preflight.yml'
-      - 'tools/visual_vnext_rc2_static_audit.py'
-      - 'tools/visual_vnext_rc2_asset_preflight.py'
+      - 'tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py'
       - 'tools/visual_v4_asset_preflight.py'
       - 'blender/visual_v4_scene.py'
-      - 'ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_VNEXT_RC2.md'
+      - 'blender/visual_vnext_rc2_bugatti_duel.py'
 
 permissions:
   contents: read
   id-token: write
 
 concurrency:
-  group: iss-visual-vnext-rc2-preflight
+  group: iss-visual-vnext-rc2-bugatti-duel-preflight
   cancel-in-progress: true
 
 env:
@@ -37,17 +36,40 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Static candidate audit
+      - name: Static Bugatti duel candidate audit
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/visual-vnext-rc2-preflight
-          python3 -m py_compile tools/visual_vnext_rc2_static_audit.py tools/visual_vnext_rc2_asset_preflight.py tools/visual_v4_asset_preflight.py blender/visual_v4_scene.py
-          python3 tools/visual_vnext_rc2_static_audit.py 2>&1 | tee artifacts/visual-vnext-rc2-preflight/static-audit.log
-          grep -F 'STATIC_CANDIDATE_AUDIT=PASS' artifacts/visual-vnext-rc2-preflight/static-audit.log
+          python3 -m py_compile tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py tools/visual_v4_asset_preflight.py blender/visual_v4_scene.py blender/visual_vnext_rc2_bugatti_duel.py
+          python3 - <<'PY' | tee artifacts/visual-vnext-rc2-preflight/static-audit.log
+          import ast
+          from pathlib import Path
+          scene=Path('blender/visual_vnext_rc2_bugatti_duel.py').read_text(encoding='utf-8')
+          core=Path('blender/visual_v4_scene.py').read_text(encoding='utf-8')
+          asset=Path('tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py').read_text(encoding='utf-8')
+          failures=[]
+          for token in ('_quant120.json','BLENDER_WORKBENCH','generic_hypercar.glb'):
+              if token in scene or token in asset: failures.append('FORBIDDEN:'+token)
+          if 'BLENDER_EEVEE_NEXT' not in core: failures.append('MISSING:EEVEE_NEXT')
+          for token in ('FULL_SOURCE_GLTF','BUGATTI_A','BUGATTI_B','A1_twoSidedApproach','A11_lightingStructure'):
+              if token not in scene: failures.append('MISSING_SCENE:'+token)
+          for token in ('BUGATTI_SOURCE_URL','8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4','bugattiA','bugattiB'):
+              if token not in asset: failures.append('MISSING_ASSET:'+token)
+          for node in ast.walk(ast.parse(scene)):
+              if isinstance(node,ast.Dict):
+                  for key,value in zip(node.keys,node.values):
+                      if isinstance(key,ast.Constant) and isinstance(key.value,str) and key.value.startswith('A') and isinstance(value,ast.Constant) and value.value is True:
+                          failures.append('HARDCODED:'+key.value)
+          if failures: raise SystemExit('STATIC_AUDIT_FAIL|'+'|'.join(failures))
+          print('VISIBLE_QUANT120_REFERENCE=NO')
+          print('WORKBENCH_FALLBACK=NO')
+          print('HARDCODED_ACCEPTANCE_PASS=NO')
+          print('FULL_SOURCE_BUGATTI_DUEL_CONTRACT=PASS')
+          print('STATIC_CANDIDATE_AUDIT=PASS')
+          PY
 
-      - name: Resolve approved full-source asset reads
-        id: assets
+      - name: Resolve exact Bugatti private read
         shell: bash
         run: |
           set -euo pipefail
@@ -57,56 +79,47 @@ jobs:
             -H "Authorization: Bearer $SUPABASE_ANON_JWT" \
             -H "x-github-oidc: $OIDC" \
             -H 'Content-Type: application/json' \
-            --data '{"mode":"resolve_assets"}' \
+            --data '{"mode":"resolve_bugatti_pair"}' \
             "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
           python3 - <<'PY'
-          import json, os
-          p='artifacts/visual-vnext-rc2-preflight/asset-access.json'
-          d=json.load(open(p,encoding='utf-8'))
-          assert d.get('success') is True, d
-          assert d.get('service')=='iss-final-video-transfer-once', d
-          assert d.get('version')=='3.0.0-visual-vnext-rc2-asset-access', d
-          assert d.get('status')=='ASSET_ACCESS_READY', d
-          a=d['assets']['bugatti']; z=d['assets']['bulldozer']
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json',encoding='utf-8'))
+          assert d.get('success') is True,d
+          assert d.get('service')=='iss-final-video-transfer-once',d
+          assert d.get('version')=='3.1.0-visual-vnext-rc2-bugatti-duel',d
+          assert d.get('status')=='BUGATTI_PAIR_ACCESS_READY',d
+          a=d['asset']
           assert a['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
           assert a['expectedSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
-          assert int(a['expectedBytes'])==31576440
-          assert z['uid']=='b06a715d23a7450babac383b8bb7fb0a'
-          assert z['expectedSha256']=='2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468'
-          assert z['library']['status']=='PRODUCTION_READY'
-          assert z['library']['assetProfile']=='DYNAMIC_ACTOR'
+          assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
-              f.write('BULLDOZER_SOURCE_URL='+z['signedUrl']+'\n')
-          print('ASSET_ACCESS_CONTRACT=PASS')
-          print('BULLDOZER_LIBRARY_IDENTITY=PASS')
+          print('BUGATTI_PAIR_ACCESS_CONTRACT=PASS')
           PY
 
-      - name: Acquire and validate exact full source geometry
+      - name: Acquire and validate exact full-source Bugatti
         shell: bash
         run: |
           set -euo pipefail
-          python3 tools/visual_vnext_rc2_asset_preflight.py 2>&1 | tee artifacts/visual-vnext-rc2-preflight/asset-preflight.log
-          grep -F 'ASSET_PREFLIGHT=PASS' artifacts/visual-vnext-rc2-preflight/asset-preflight.log
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee artifacts/visual-vnext-rc2-preflight/asset-preflight.log
+          grep -F 'BUGATTI_DUEL_EXACT_SHA=PASS' artifacts/visual-vnext-rc2-preflight/asset-preflight.log
           python3 - <<'PY' >> "$GITHUB_ENV"
           import json
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json',encoding='utf-8'))
-          assert d['status']=='PASS'
-          assert d['visualProxyForbidden'] is True
-          assert d['quant120Forbidden'] is True
-          b=d['assets']['bugatti']; z=d['assets']['bulldozer']
-          assert b['sourceIdentity']['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
-          assert z['sourceIdentity']['uid']=='b06a715d23a7450babac383b8bb7fb0a'
-          assert b['fullGeometryGate'] is True and z['fullGeometryGate'] is True
-          assert b['identity']['binaryExact'] is True
-          assert z['identity']['binaryExact'] is True
-          assert z['geometry']['meshCount']==441
-          assert z['geometry']['materialCount']==14
-          assert z['geometry']['imageCount']==44
-          assert z['geometry']['nodeCount']==904
-          assert z['geometry']['triangleCount']==111483
-          print('BUGATTI_PRIMARY='+b['primaryScene'])
-          print('BULLDOZER_PRIMARY='+z['primaryScene'])
+          assert d['status']=='PASS' and d['visualProxyForbidden'] is True and d['quant120Forbidden'] is True
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          for row in (a,b):
+              assert row['sourceIdentity']['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
+              assert row['fullGeometryGate'] is True
+              assert row['identity']['binaryExact'] is True
+              assert row['geometry']['meshCount']==61
+              assert row['geometry']['materialCount']==61
+              assert row['geometry']['imageCount']==29
+              assert row['geometry']['nodeCount']==63
+              assert 160000 <= row['geometry']['triangleCount'] <= 180000
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_A_PRIMARY='+a['primaryScene'])
+          print('BUGATTI_B_PRIMARY='+b['primaryScene'])
           PY
 
       - name: Install Blender runtime dependencies
@@ -127,51 +140,53 @@ jobs:
           "$BIN" --version | tee artifacts/visual-vnext-rc2-preflight/blender-version.txt
           grep -F "Blender ${BLENDER_VERSION}" artifacts/visual-vnext-rc2-preflight/blender-version.txt
 
-      - name: Run full-source physics camera lighting damage debris preflight
+      - name: Run exact Bugatti head-on physics visual preflight
         shell: bash
         run: |
           set -euo pipefail
           BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
-          "$BIN" --background --factory-startup --python blender/visual_v4_scene.py -- \
+          "$BIN" --background --factory-startup --python blender/visual_vnext_rc2_bugatti_duel.py -- \
             --mode preflight \
-            --bugatti "$BUGATTI_PRIMARY" \
-            --bulldozer "$BULLDOZER_PRIMARY" \
+            --bugatti-a "$BUGATTI_A_PRIMARY" \
+            --bugatti-b "$BUGATTI_B_PRIMARY" \
             --asset-manifest artifacts/visual-vnext-rc2-preflight/assets.json \
             --out artifacts/visual-vnext-rc2-preflight \
             2>&1 | tee artifacts/visual-vnext-rc2-preflight/blender-preflight.log
-          grep -F 'ISS_VISUAL_V4_MACHINE_PREFLIGHT=PASS' artifacts/visual-vnext-rc2-preflight/blender-preflight.log
+          grep -F 'ISS_VISUAL_VNEXT_RC2_BUGATTI_DUEL_MACHINE_PREFLIGHT=PASS' artifacts/visual-vnext-rc2-preflight/blender-preflight.log
 
-      - name: Validate machine preflight truth contract
+      - name: Validate machine truth contract
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY' | tee artifacts/visual-vnext-rc2-preflight/validation.log
           import json
           from pathlib import Path
-          p=Path('artifacts/visual-vnext-rc2-preflight/preflight-result.json')
-          d=json.loads(p.read_text(encoding='utf-8'))
+          d=json.loads(Path('artifacts/visual-vnext-rc2-preflight/preflight-result.json').read_text(encoding='utf-8'))
           failures=[]
-          if d.get('status')!='MACHINE_PREFLIGHT_PASS_VISUAL_REVIEW_REQUIRED': failures.append('status')
-          if d.get('renderEngine')!='BLENDER_EEVEE_NEXT': failures.append('renderEngine')
-          if d.get('visualGeometry')!='FULL_SOURCE_GLTF': failures.append('visualGeometry')
-          if d.get('visualProxyUsed') is not False: failures.append('visualProxyUsed')
-          if d.get('collisionProxyUsed') is not True: failures.append('collisionProxyUsed')
-          if d.get('vehicleMotionSolverDriven') is not True: failures.append('vehicleMotionSolverDriven')
-          if d.get('postHandoffVehicleLocationKeys') is not False: failures.append('postHandoffVehicleLocationKeys')
-          if d.get('damagePhysicalSolver') is not False: failures.append('damagePhysicalSolverTruth')
-          if d.get('debrisRigidBody') is not True: failures.append('debrisRigidBody')
-          if d.get('debrisReleaseImpactTriggered') is not True: failures.append('debrisReleaseImpactTriggered')
-          if d.get('cameraShotCount',0)<3: failures.append('cameraShotCount')
-          if d.get('resolution')!=[960,540]: failures.append('resolution')
-          gates=d.get('machineGates') or {}
-          failures.extend(k for k,v in gates.items() if v is not True)
+          checks={
+            'scope':d.get('scope')=='ISS_VISUAL_VNEXT_RC2_BUGATTI_DUEL',
+            'status':d.get('status')=='MACHINE_PREFLIGHT_PASS_VISUAL_REVIEW_REQUIRED',
+            'renderEngine':d.get('renderEngine')=='BLENDER_EEVEE_NEXT',
+            'visualGeometry':d.get('visualGeometry')=='FULL_SOURCE_GLTF',
+            'visualProxyUsed':d.get('visualProxyUsed') is False,
+            'collisionProxyUsed':d.get('collisionProxyUsed') is True,
+            'solverDriven':d.get('vehicleMotionSolverDriven') is True,
+            'postHandoffKeys':d.get('postHandoffVehicleLocationKeys') is False,
+            'debrisRigidBody':d.get('debrisRigidBody') is True,
+            'debrisTriggered':d.get('debrisReleaseImpactTriggered') is True,
+            'cameraCount':d.get('cameraShotCount',0)>=3,
+            'resolution':d.get('resolution')==[960,540],
+            'finalFramesBlocked':d.get('finalFrames')==[],
+          }
+          failures.extend(k for k,v in checks.items() if not v)
+          failures.extend(k for k,v in (d.get('machineGates') or {}).items() if v is not True)
           previews=d.get('previews') or []
           if len(previews)!=3: failures.append('previewCount')
           for row in previews:
-              q=Path(row['path'])
-              if not q.is_file() or q.stat().st_size < 20000: failures.append('previewInvalid:'+str(q))
+              p=Path(row['path'])
+              if not p.is_file() or p.stat().st_size<20000: failures.append('previewInvalid:'+str(p))
           if not d.get('visualReviewRequired'): failures.append('visualReviewRequired')
-          if failures: raise SystemExit('MACHINE_PREFLIGHT_VALIDATION_FAIL|'+','.join(failures))
+          if failures: raise SystemExit('MACHINE_PREFLIGHT_VALIDATION_FAIL|' + ','.join(failures))
           print('MACHINE_PREFLIGHT_TRUTH_CONTRACT=PASS')
           print('FINAL_RENDER_AUTHORIZATION=NOT_YET_VISUAL_REVIEW_REQUIRED')
           PY
@@ -191,7 +206,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: iss-visual-vnext-rc2-preflight-${{ github.run_id }}
+          name: iss-visual-vnext-rc2-bugatti-duel-${{ github.run_id }}
           path: artifacts/visual-vnext-rc2-preflight/
           if-no-files-found: warn
           retention-days: 7
