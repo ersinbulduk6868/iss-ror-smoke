@@ -19,7 +19,7 @@ ASSET_ROOT = Path("runtime-assets/visual-v4")
 ROOT.mkdir(parents=True, exist_ok=True)
 ASSET_ROOT.mkdir(parents=True, exist_ok=True)
 
-UA = "InfiniteShortsStudio-VisualV4Preflight/2.0"
+UA = "InfiniteShortsStudio-VisualV4Preflight/2.1"
 MAX_BYTES = 1024 * 1024 * 1024
 MAX_UNCOMPRESSED = 4 * 1024 * 1024 * 1024
 
@@ -90,9 +90,11 @@ def validate_metadata(kind: str) -> dict[str, Any]:
     if s["nameContains"] not in name.lower():
         fail(f"{kind.upper()}_NAME_MISMATCH:{name}")
     user = d.get("user") or {}
-    creator = str(user.get("displayName") or user.get("username") or "") if isinstance(user, dict) else ""
-    if s["creatorContains"] not in creator.lower():
-        fail(f"{kind.upper()}_CREATOR_MISMATCH:{creator}")
+    creator_username = str(user.get("username") or "") if isinstance(user, dict) else ""
+    creator_display = str(user.get("displayName") or "") if isinstance(user, dict) else ""
+    creator_candidates = (creator_username.lower(), creator_display.lower())
+    if not any(s["creatorContains"] in value for value in creator_candidates):
+        fail(f"{kind.upper()}_CREATOR_MISMATCH:username={creator_username}|display={creator_display}")
     if d.get("isDownloadable") is not True:
         fail(f"{kind.upper()}_NOT_DOWNLOADABLE")
     if d.get("isAgeRestricted") is True:
@@ -104,7 +106,14 @@ def validate_metadata(kind: str) -> dict[str, Any]:
     lic = norm_license(d.get("license"))
     if not any(m in lic for m in s["licenseMarkers"]):
         fail(f"{kind.upper()}_LICENSE_MISMATCH:{lic}")
-    return {"uid": s["uid"], "name": name, "creator": creator, "license": lic, "isDownloadable": True}
+    return {
+        "uid": s["uid"],
+        "name": name,
+        "creatorUsername": creator_username,
+        "creatorDisplayName": creator_display,
+        "license": lic,
+        "isDownloadable": True,
+    }
 
 
 def html_confirm_url(raw: bytes, base_url: str) -> str | None:
