@@ -1,0 +1,35 @@
+name: Export Blender 4.5.13 runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-runtime-export.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  export-runtime:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors \
+            https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz \
+            -o blender-4.5.13-linux-x64.tar.xz
+          sha256sum blender-4.5.13-linux-x64.tar.xz | tee blender-runtime-sha256.txt
+          ls -lh blender-4.5.13-linux-x64.tar.xz
+      - name: Upload Blender runtime
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: blender-4.5.13-linux-x64-runtime
+          path: |
+            blender-4.5.13-linux-x64.tar.xz
+            blender-runtime-sha256.txt
+          compression-level: 0
+          retention-days: 1
