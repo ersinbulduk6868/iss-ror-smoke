@@ -1,0 +1,67 @@
+name: ISS Visual v4 asset layer audit
+
+on:
+  push:
+    branches:
+      - 'iss-audit/visual-v4-asset-layer'
+    paths:
+      - '.github/workflows/visual-v4-asset-layer-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout audit branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Audit Bugatti transport archive structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          import tools.visual_v4_asset_preflight as core
+
+          md = core.validate_metadata('bugatti')
+          print('BUGATTI_METADATA=PASS')
+          print('BUGATTI_METADATA_JSON=' + json.dumps(md, ensure_ascii=False))
+          payload, transport = core.download('bugatti')
+          print('BUGATTI_TRANSPORT=PASS')
+          print('BUGATTI_PAYLOAD=' + str(payload))
+          print('BUGATTI_TRANSPORT_JSON=' + json.dumps(transport, ensure_ascii=False))
+          print('BUGATTI_PAYLOAD_BYTES=' + str(payload.stat().st_size))
+
+          if payload.suffix.lower() != '.zip':
+              print('BUGATTI_ARCHIVE_KIND=' + payload.suffix.lower())
+              raise SystemExit(0)
+
+          with zipfile.ZipFile(payload, 'r') as z:
+              rows=[]
+              for i in z.infolist():
+                  if i.is_dir():
+                      continue
+                  p=Path(i.filename)
+                  rows.append((p.suffix.lower(), int(i.file_size), i.filename))
+              print('BUGATTI_ARCHIVE_FILE_COUNT=' + str(len(rows)))
+              for ext in sorted(set(x[0] for x in rows)):
+                  subset=[x for x in rows if x[0]==ext]
+                  print(f'EXTENSION|{ext or "<none>"}|count={len(subset)}|bytes={sum(x[1] for x in subset)}')
+              primary=[x for x in rows if x[0] in ('.glb','.gltf')]
+              nested=[x for x in rows if x[0] in ('.7z','.zip','.rar','.tar','.gz','.xz')]
+              print('DIRECT_PRIMARY_COUNT=' + str(len(primary)))
+              for x in primary[:50]: print('DIRECT_PRIMARY|' + str(x[1]) + '|' + x[2])
+              print('NESTED_ARCHIVE_COUNT=' + str(len(nested)))
+              for x in nested[:50]: print('NESTED_ARCHIVE|' + str(x[1]) + '|' + x[2])
+              if not primary:
+                  print('AUDIT_DECISION=NESTED_EXTRACTION_REQUIRED')
+              else:
+                  print('AUDIT_DECISION=DIRECT_PRIMARY_AVAILABLE_SKIP_NESTED_ARCHIVES')
+          PY
