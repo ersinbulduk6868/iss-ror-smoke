@@ -6,6 +6,7 @@ on:
       - 'iss-test/visual-v4-preflight'
     paths:
       - '.github/workflows/blender-visual-v4-preflight.yml'
+      - 'tools/visual_v4_static_audit.py'
       - 'tools/visual_v4_asset_preflight.py'
       - 'blender/visual_v4_scene.py'
       - 'ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_V4.md'
@@ -21,70 +22,25 @@ concurrency:
 env:
   BLENDER_VERSION: '4.5.13'
   BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
-  SKETCHFAB_OAUTH_ACCESS_TOKEN: ${{ secrets.SKETCHFAB_OAUTH_ACCESS_TOKEN }}
-  SKETCHFAB_API_TOKEN: ${{ secrets.SKETCHFAB_API_TOKEN }}
-  SKETCHFAB_TOKEN: ${{ secrets.SKETCHFAB_TOKEN }}
 
 jobs:
   preflight:
     runs-on: ubuntu-22.04
-    timeout-minutes: 35
+    timeout-minutes: 40
     steps:
       - name: Checkout isolated candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Static candidate audit
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p artifacts/visual-v4-preflight
-          python3 -m py_compile tools/visual_v4_asset_preflight.py blender/visual_v4_scene.py
-          python3 - <<'PY' | tee artifacts/visual-v4-preflight/static-audit.log
-          import ast
-          from pathlib import Path
-
-          scene_path=Path('blender/visual_v4_scene.py')
-          asset_path=Path('tools/visual_v4_asset_preflight.py')
-          workflow_path=Path('.github/workflows/blender-visual-v4-preflight.yml')
-          scene=scene_path.read_text(encoding='utf-8')
-          asset=asset_path.read_text(encoding='utf-8')
-          workflow=workflow_path.read_text(encoding='utf-8')
-
-          failures=[]
-          for label,text in [('scene',scene),('asset',asset)]:
-              for banned in ('assets/test-real-model','_quant120.json','BLENDER_WORKBENCH','loadq('):
-                  if banned in text:
-                      failures.append(f'{label}:FORBIDDEN:{banned}')
-          if "BLENDER_EEVEE_NEXT" not in scene:
-              failures.append('EEVEE_NEXT_REQUIRED_MARKER_MISSING')
-          if 'FULL_SOURCE_GLTF' not in scene:
-              failures.append('FULL_SOURCE_GLTF_MARKER_MISSING')
-          if 'damagePhysicalSolver' not in scene or 'False' not in scene:
-              failures.append('DAMAGE_TRUTH_MARKER_MISSING')
-          if 'git push' in workflow or 'contents: write' in workflow:
-              failures.append('WORKFLOW_WRITE_TO_REPO_FORBIDDEN')
-          if "iss-test/visual-v4-preflight" not in workflow:
-              failures.append('CANDIDATE_BRANCH_FILTER_MISSING')
-
-          tree=ast.parse(scene)
-          for node in ast.walk(tree):
-              if not isinstance(node,ast.Dict):
-                  continue
-              for k,v in zip(node.keys,node.values):
-                  if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('A'):
-                      if isinstance(v,ast.Constant) and v.value is True:
-                          failures.append(f'HARDCODED_ACCEPTANCE_TRUE:{k.value}')
-          if failures:
-              raise SystemExit('STATIC_AUDIT_FAIL|'+'|'.join(failures))
-          print('LOCKED_SERVICE_MUTATION=NO')
-          print('VISIBLE_QUANT120_REFERENCE=NO')
-          print('WORKBENCH_FALLBACK=NO')
-          print('HARDCODED_ACCEPTANCE_PASS=NO')
-          print('WORKFLOW_REPO_WRITE=NO')
-          print('STATIC_CANDIDATE_AUDIT=PASS')
-          PY
+          python3 -m py_compile tools/visual_v4_static_audit.py tools/visual_v4_asset_preflight.py blender/visual_v4_scene.py
+          python3 tools/visual_v4_static_audit.py 2>&1 | tee artifacts/visual-v4-preflight/static-audit.log
+          grep -F 'STATIC_CANDIDATE_AUDIT=PASS' artifacts/visual-v4-preflight/static-audit.log
 
       - name: Acquire and validate exact full source geometry
         shell: bash
@@ -102,6 +58,8 @@ jobs:
           assert b['sourceIdentity']['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
           assert z['sourceIdentity']['uid']=='b06a715d23a7450babac383b8bb7fb0a'
           assert b['fullGeometryGate'] is True and z['fullGeometryGate'] is True
+          assert z['identity']['binaryExact'] is True
+          assert b['identity']['identityVerifiedBy'] in ('EXACT_BINARY_SHA256','EXACT_SKETCHFAB_METADATA_PLUS_STRICT_GEOMETRY_FINGERPRINT')
           print('BUGATTI_PRIMARY='+b['primaryScene'])
           print('BULLDOZER_PRIMARY='+z['primaryScene'])
           PY
