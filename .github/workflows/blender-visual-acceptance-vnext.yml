@@ -1,0 +1,116 @@
+name: ISS Blender battle visual acceptance vNext
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/blender-visual-acceptance-vnext.yml'
+      - 'blender/visual_acceptance_vnext.py'
+      - 'ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_VNEXT.md'
+      - 'assets/test-real-model/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: iss-blender-visual-vnext
+  cancel-in-progress: true
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+
+jobs:
+  visual-vnext:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Install runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+
+      - name: Download exact Blender 4.5.13
+        run: |
+          set -euo pipefail
+          mkdir -p .blender artifacts/visual-vnext
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee artifacts/visual-vnext/blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" artifacts/visual-vnext/blender-version.txt
+
+      - name: Run A1-A11 visual acceptance collision
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup --python blender/visual_acceptance_vnext.py 2>&1 | tee artifacts/visual-vnext/runtime.log
+          grep -F 'ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_VNEXT=PASS' artifacts/visual-vnext/runtime.log
+
+      - name: Validate locked acceptance and video
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          p='artifacts/visual-vnext/result.json'
+          d=json.load(open(p,encoding='utf-8'))
+          gates=[f'A{i}_' for i in range(1,12)]
+          failures=[]
+          for prefix in gates:
+              ks=[k for k in d if k.startswith(prefix)]
+              if not ks: failures.append(prefix+'missing')
+              for k in ks:
+                  if d[k] is not True: failures.append(k)
+          if d.get('resolution') != [1280,720]: failures.append('resolution')
+          if d.get('cameraShotCount',0) < 3: failures.append('cameraShotCount')
+          if d.get('debrisCount',0) < 12: failures.append('debrisCount')
+          if failures: raise SystemExit('ACCEPTANCE_FAIL '+','.join(failures))
+          print('A1_A11_MACHINE_GATES=PASS')
+          PY
+          V='artifacts/visual-vnext/bugatti-vs-bulldozer-vnext.mp4'
+          test -s "$V"
+          DUR="$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$V")"
+          echo "videoDuration=$DUR"
+          python3 - "$DUR" <<'PY'
+          import sys
+          assert float(sys.argv[1]) >= 5.9
+          PY
+
+      - name: Build visual review montage
+        run: |
+          set -euo pipefail
+          V='artifacts/visual-vnext/bugatti-vs-bulldozer-vnext.mp4'
+          ffmpeg -y -i "$V" -vf "fps=1,scale=480:-1,tile=3x2" -frames:v 1 artifacts/visual-vnext/review-montage.jpg
+          for T in 1.0 2.0 3.0 5.0; do
+            ffmpeg -y -ss "$T" -i "$V" -frames:v 1 "artifacts/visual-vnext/frame-${T}.jpg"
+          done
+
+      - name: Publish latest review files to repository
+        run: |
+          set -euo pipefail
+          mkdir -p generated/visual-vnext
+          cp artifacts/visual-vnext/bugatti-vs-bulldozer-vnext.mp4 generated/visual-vnext/latest.mp4
+          cp artifacts/visual-vnext/result.json generated/visual-vnext/result.json
+          cp artifacts/visual-vnext/review-montage.jpg generated/visual-vnext/review-montage.jpg
+          cp artifacts/visual-vnext/frame-*.jpg generated/visual-vnext/
+          git config user.name 'iss-visual-test-bot'
+          git config user.email 'actions@users.noreply.github.com'
+          git add generated/visual-vnext
+          git commit -m "Publish battle visual acceptance vNext review" || true
+          git push origin HEAD:main
+
+      - name: Upload final review artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-battle-visual-vnext-${{ github.run_id }}
+          path: artifacts/visual-vnext/
+          if-no-files-found: warn
+          retention-days: 7
