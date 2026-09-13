@@ -1,0 +1,200 @@
+name: ISS Blender visual v4 preflight
+
+on:
+  push:
+    branches:
+      - 'iss-test/visual-v4-preflight'
+    paths:
+      - '.github/workflows/blender-visual-v4-preflight.yml'
+      - 'tools/visual_v4_asset_preflight.py'
+      - 'blender/visual_v4_scene.py'
+      - 'ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_V4.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: iss-blender-visual-v4-preflight
+  cancel-in-progress: true
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+  SKETCHFAB_OAUTH_ACCESS_TOKEN: ${{ secrets.SKETCHFAB_OAUTH_ACCESS_TOKEN }}
+  SKETCHFAB_API_TOKEN: ${{ secrets.SKETCHFAB_API_TOKEN }}
+  SKETCHFAB_TOKEN: ${{ secrets.SKETCHFAB_TOKEN }}
+
+jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout isolated candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Static candidate audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/visual-v4-preflight
+          python3 -m py_compile tools/visual_v4_asset_preflight.py blender/visual_v4_scene.py
+          python3 - <<'PY' | tee artifacts/visual-v4-preflight/static-audit.log
+          import ast
+          from pathlib import Path
+
+          scene_path=Path('blender/visual_v4_scene.py')
+          asset_path=Path('tools/visual_v4_asset_preflight.py')
+          workflow_path=Path('.github/workflows/blender-visual-v4-preflight.yml')
+          scene=scene_path.read_text(encoding='utf-8')
+          asset=asset_path.read_text(encoding='utf-8')
+          workflow=workflow_path.read_text(encoding='utf-8')
+
+          failures=[]
+          for label,text in [('scene',scene),('asset',asset)]:
+              for banned in ('assets/test-real-model','_quant120.json','BLENDER_WORKBENCH','loadq('):
+                  if banned in text:
+                      failures.append(f'{label}:FORBIDDEN:{banned}')
+          if "BLENDER_EEVEE_NEXT" not in scene:
+              failures.append('EEVEE_NEXT_REQUIRED_MARKER_MISSING')
+          if 'FULL_SOURCE_GLTF' not in scene:
+              failures.append('FULL_SOURCE_GLTF_MARKER_MISSING')
+          if 'damagePhysicalSolver' not in scene or 'False' not in scene:
+              failures.append('DAMAGE_TRUTH_MARKER_MISSING')
+          if 'git push' in workflow or 'contents: write' in workflow:
+              failures.append('WORKFLOW_WRITE_TO_REPO_FORBIDDEN')
+          if "iss-test/visual-v4-preflight" not in workflow:
+              failures.append('CANDIDATE_BRANCH_FILTER_MISSING')
+
+          tree=ast.parse(scene)
+          for node in ast.walk(tree):
+              if not isinstance(node,ast.Dict):
+                  continue
+              for k,v in zip(node.keys,node.values):
+                  if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('A'):
+                      if isinstance(v,ast.Constant) and v.value is True:
+                          failures.append(f'HARDCODED_ACCEPTANCE_TRUE:{k.value}')
+          if failures:
+              raise SystemExit('STATIC_AUDIT_FAIL|'+'|'.join(failures))
+          print('LOCKED_SERVICE_MUTATION=NO')
+          print('VISIBLE_QUANT120_REFERENCE=NO')
+          print('WORKBENCH_FALLBACK=NO')
+          print('HARDCODED_ACCEPTANCE_PASS=NO')
+          print('WORKFLOW_REPO_WRITE=NO')
+          print('STATIC_CANDIDATE_AUDIT=PASS')
+          PY
+
+      - name: Acquire and validate exact full source geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_v4_asset_preflight.py 2>&1 | tee artifacts/visual-v4-preflight/asset-preflight.log
+          grep -F 'ASSET_PREFLIGHT=PASS' artifacts/visual-v4-preflight/asset-preflight.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-v4-preflight/assets.json',encoding='utf-8'))
+          assert d['status']=='PASS'
+          assert d['visualProxyForbidden'] is True
+          assert d['quant120Forbidden'] is True
+          b=d['assets']['bugatti']; z=d['assets']['bulldozer']
+          assert b['sourceIdentity']['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
+          assert z['sourceIdentity']['uid']=='b06a715d23a7450babac383b8bb7fb0a'
+          assert b['fullGeometryGate'] is True and z['fullGeometryGate'] is True
+          print('BUGATTI_PRIMARY='+b['primaryScene'])
+          print('BULLDOZER_PRIMARY='+z['primaryScene'])
+          PY
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee artifacts/visual-v4-preflight/blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" artifacts/visual-v4-preflight/blender-version.txt
+
+      - name: Run physics camera lighting damage debris preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup --python blender/visual_v4_scene.py -- \
+            --mode preflight \
+            --bugatti "$BUGATTI_PRIMARY" \
+            --bulldozer "$BULLDOZER_PRIMARY" \
+            --asset-manifest artifacts/visual-v4-preflight/assets.json \
+            --out artifacts/visual-v4-preflight \
+            2>&1 | tee artifacts/visual-v4-preflight/blender-preflight.log
+          grep -F 'ISS_VISUAL_V4_MACHINE_PREFLIGHT=PASS' artifacts/visual-v4-preflight/blender-preflight.log
+
+      - name: Validate machine preflight truth contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee artifacts/visual-v4-preflight/validation.log
+          import json
+          from pathlib import Path
+          p=Path('artifacts/visual-v4-preflight/preflight-result.json')
+          d=json.loads(p.read_text(encoding='utf-8'))
+          failures=[]
+          if d.get('status')!='MACHINE_PREFLIGHT_PASS_VISUAL_REVIEW_REQUIRED': failures.append('status')
+          if d.get('renderEngine')!='BLENDER_EEVEE_NEXT': failures.append('renderEngine')
+          if d.get('visualGeometry')!='FULL_SOURCE_GLTF': failures.append('visualGeometry')
+          if d.get('visualProxyUsed') is not False: failures.append('visualProxyUsed')
+          if d.get('collisionProxyUsed') is not True: failures.append('collisionProxyUsed')
+          if d.get('vehicleMotionSolverDriven') is not True: failures.append('vehicleMotionSolverDriven')
+          if d.get('postHandoffVehicleLocationKeys') is not False: failures.append('postHandoffVehicleLocationKeys')
+          if d.get('damagePhysicalSolver') is not False: failures.append('damagePhysicalSolverTruth')
+          if d.get('debrisRigidBody') is not True: failures.append('debrisRigidBody')
+          if d.get('debrisReleaseImpactTriggered') is not True: failures.append('debrisReleaseImpactTriggered')
+          if d.get('cameraShotCount',0)<3: failures.append('cameraShotCount')
+          if d.get('resolution')!=[960,540]: failures.append('preflightResolution')
+          mg=d.get('machineGates') or {}
+          failures.extend(k for k,v in mg.items() if v is not True)
+          previews=d.get('previews') or []
+          if len(previews)!=3: failures.append('previewCount')
+          for row in previews:
+              q=Path(row['path'])
+              if not q.is_file() or q.stat().st_size < 20000: failures.append('previewInvalid:'+str(q))
+          if not d.get('visualReviewRequired'): failures.append('visualReviewRequiredMissing')
+          if failures: raise SystemExit('MACHINE_PREFLIGHT_VALIDATION_FAIL|'+','.join(failures))
+          print('MACHINE_PREFLIGHT_TRUTH_CONTRACT=PASS')
+          print('FINAL_RENDER_AUTHORIZATION=NOT_YET_VISUAL_REVIEW_REQUIRED')
+          PY
+
+      - name: Build three-frame visual review strip
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="$(find artifacts/visual-v4-preflight -maxdepth 1 -name 'preview-approach-*.png' -print -quit)"
+          I="$(find artifacts/visual-v4-preflight -maxdepth 1 -name 'preview-impact-*.png' -print -quit)"
+          F="$(find artifacts/visual-v4-preflight -maxdepth 1 -name 'preview-aftermath-*.png' -print -quit)"
+          test -n "$A" && test -n "$I" && test -n "$F"
+          ffmpeg -y -i "$A" -i "$I" -i "$F" -filter_complex '[0:v][1:v][2:v]hstack=inputs=3[v]' -map '[v]' -frames:v 1 artifacts/visual-v4-preflight/review-strip.jpg
+          sha256sum artifacts/visual-v4-preflight/review-strip.jpg artifacts/visual-v4-preflight/preflight-result.json | tee artifacts/visual-v4-preflight/review-sha256.txt
+
+      - name: Upload preflight evidence only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-visual-v4-preflight-${{ github.run_id }}
+          path: |
+            artifacts/visual-v4-preflight/*.json
+            artifacts/visual-v4-preflight/*.log
+            artifacts/visual-v4-preflight/*.txt
+            artifacts/visual-v4-preflight/*.png
+            artifacts/visual-v4-preflight/*.jpg
+            ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_V4.md
+          if-no-files-found: warn
+          retention-days: 7
