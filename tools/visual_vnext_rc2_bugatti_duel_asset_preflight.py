@@ -9,6 +9,7 @@ import tools.visual_v4_asset_preflight as core
 
 BUGATTI_SHA = "8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4"
 BUGATTI_UID = "4af92c51ecdd4efa9b1c19a1163d9f46"
+BUGATTI_VERTEX_COUNT = 150188
 
 url = os.environ.get("BUGATTI_SOURCE_URL", "").strip()
 if not url.startswith("https://"):
@@ -20,6 +21,7 @@ core.ROOT.mkdir(parents=True, exist_ok=True)
 core.ASSET_ROOT.mkdir(parents=True, exist_ok=True)
 core.SPECS["bugatti"]["transport"] = url
 core.SPECS["bugatti"]["referenceSha256"] = BUGATTI_SHA
+core.SPECS["bugatti"]["vertexRange"] = (BUGATTI_VERTEX_COUNT, BUGATTI_VERTEX_COUNT)
 
 row = core.run_one("bugatti")
 if row["sourceIdentity"]["uid"] != BUGATTI_UID:
@@ -30,6 +32,8 @@ if row["identity"]["primarySceneSha256"].lower() != BUGATTI_SHA:
     raise RuntimeError("BUGATTI_PRIMARY_SHA_GATE_FAIL")
 if row["geometry"]["meshCount"] != 61 or row["geometry"]["materialCount"] != 61 or row["geometry"]["imageCount"] != 29 or row["geometry"]["nodeCount"] != 63:
     raise RuntimeError("BUGATTI_GEOMETRY_FINGERPRINT_GATE_FAIL")
+if row["geometry"]["vertexCount"] != BUGATTI_VERTEX_COUNT:
+    raise RuntimeError("BUGATTI_VERTEX_FINGERPRINT_GATE_FAIL")
 if not (160000 <= row["geometry"]["triangleCount"] <= 180000):
     raise RuntimeError("BUGATTI_TRIANGLE_GATE_FAIL")
 
@@ -53,4 +57,6 @@ print("ASSET_PREFLIGHT=PASS")
 print("BUGATTI_A_FULL_GEOMETRY=PASS")
 print("BUGATTI_B_FULL_GEOMETRY=PASS")
 print("BUGATTI_DUEL_EXACT_SHA=PASS")
+print(f"BUGATTI_VERTEX_COUNT={row['geometry']['vertexCount']}")
+print(f"BUGATTI_TRIANGLE_COUNT={row['geometry']['triangleCount']}")
 print(f"BUGATTI_DUEL_PRIMARY_SCENE={row['primaryScene']}")
