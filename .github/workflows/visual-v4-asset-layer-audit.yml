@@ -14,20 +14,30 @@ permissions:
 jobs:
   audit:
     runs-on: ubuntu-22.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout audit branch
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 1
 
-      - name: Audit Bugatti transport archive structure
+      - name: Install archive audit dependency
         shell: bash
         run: |
           set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends p7zip-full
+          7z | head -n 3
+
+      - name: Audit Bugatti transport and nested archive structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/iss-bugatti-audit
+          mkdir -p /tmp/iss-bugatti-audit/outer /tmp/iss-bugatti-audit/nested
           python3 - <<'PY'
-          import json, zipfile
-          from pathlib import Path
+          import json, zipfile, shutil, os
+          from pathlib import Path, PurePosixPath
           import tools.visual_v4_asset_preflight as core
 
           md = core.validate_metadata('bugatti')
@@ -35,33 +45,68 @@ jobs:
           print('BUGATTI_METADATA_JSON=' + json.dumps(md, ensure_ascii=False))
           payload, transport = core.download('bugatti')
           print('BUGATTI_TRANSPORT=PASS')
-          print('BUGATTI_PAYLOAD=' + str(payload))
           print('BUGATTI_TRANSPORT_JSON=' + json.dumps(transport, ensure_ascii=False))
           print('BUGATTI_PAYLOAD_BYTES=' + str(payload.stat().st_size))
 
           if payload.suffix.lower() != '.zip':
-              print('BUGATTI_ARCHIVE_KIND=' + payload.suffix.lower())
-              raise SystemExit(0)
+              raise SystemExit('AUDIT_EXPECTED_OUTER_ZIP')
 
+          out=Path('/tmp/iss-bugatti-audit/outer')
+          nested=[]
           with zipfile.ZipFile(payload, 'r') as z:
               rows=[]
-              for i in z.infolist():
-                  if i.is_dir():
+              for info in z.infolist():
+                  if info.is_dir():
                       continue
-                  p=Path(i.filename)
-                  rows.append((p.suffix.lower(), int(i.file_size), i.filename))
-              print('BUGATTI_ARCHIVE_FILE_COUNT=' + str(len(rows)))
-              for ext in sorted(set(x[0] for x in rows)):
-                  subset=[x for x in rows if x[0]==ext]
-                  print(f'EXTENSION|{ext or "<none>"}|count={len(subset)}|bytes={sum(x[1] for x in subset)}')
-              primary=[x for x in rows if x[0] in ('.glb','.gltf')]
-              nested=[x for x in rows if x[0] in ('.7z','.zip','.rar','.tar','.gz','.xz')]
-              print('DIRECT_PRIMARY_COUNT=' + str(len(primary)))
-              for x in primary[:50]: print('DIRECT_PRIMARY|' + str(x[1]) + '|' + x[2])
+                  p=PurePosixPath(info.filename.replace('\\','/'))
+                  if p.is_absolute() or '..' in p.parts:
+                      raise SystemExit('OUTER_PATH_TRAVERSAL:'+info.filename)
+                  rows.append((Path(info.filename).suffix.lower(), int(info.file_size), info.filename))
+                  if Path(info.filename).suffix.lower() in ('.7z','.zip','.rar','.tar','.gz','.xz'):
+                      nested.append(info)
+              print('BUGATTI_OUTER_FILE_COUNT=' + str(len(rows)))
+              direct=[x for x in rows if x[0] in ('.glb','.gltf')]
+              print('DIRECT_PRIMARY_COUNT=' + str(len(direct)))
               print('NESTED_ARCHIVE_COUNT=' + str(len(nested)))
-              for x in nested[:50]: print('NESTED_ARCHIVE|' + str(x[1]) + '|' + x[2])
-              if not primary:
-                  print('AUDIT_DECISION=NESTED_EXTRACTION_REQUIRED')
-              else:
-                  print('AUDIT_DECISION=DIRECT_PRIMARY_AVAILABLE_SKIP_NESTED_ARCHIVES')
+              if len(nested) != 1:
+                  raise SystemExit('NESTED_ARCHIVE_COUNT_UNEXPECTED:'+str(len(nested)))
+              info=nested[0]
+              target=out/Path(info.filename).name
+              with z.open(info) as src, target.open('wb') as dst:
+                  shutil.copyfileobj(src,dst,1024*1024)
+              print('NESTED_ARCHIVE_PATH='+str(target))
+              print('NESTED_ARCHIVE_BYTES='+str(target.stat().st_size))
           PY
+
+          NESTED="$(find /tmp/iss-bugatti-audit/outer -maxdepth 1 -type f -name '*.7z' -print -quit)"
+          test -n "$NESTED"
+          7z l -slt "$NESTED" | tee /tmp/iss-bugatti-audit/7z-list.txt
+
+          python3 - <<'PY'
+          from pathlib import PurePosixPath
+          import re
+          text=open('/tmp/iss-bugatti-audit/7z-list.txt',encoding='utf-8',errors='replace').read().splitlines()
+          paths=[]
+          for line in text:
+              if not line.startswith('Path = '):
+                  continue
+              value=line[7:].strip().replace('\\','/')
+              if value.endswith('.7z') and len(paths)==0:
+                  continue
+              p=PurePosixPath(value)
+              if p.is_absolute() or '..' in p.parts or re.match(r'^[A-Za-z]:',value):
+                  raise SystemExit('NESTED_PATH_UNSAFE:'+value)
+              paths.append(value)
+          models=[p for p in paths if p.lower().endswith(('.glb','.gltf'))]
+          print('NESTED_PATH_SAFETY=PASS')
+          print('NESTED_MEMBER_COUNT='+str(len(paths)))
+          print('NESTED_MODEL_COUNT='+str(len(models)))
+          for p in models[:50]: print('NESTED_MODEL='+p)
+          if not models:
+              raise SystemExit('NESTED_MODEL_MISSING')
+          PY
+
+          7z x -y -o/tmp/iss-bugatti-audit/nested "$NESTED" >/tmp/iss-bugatti-audit/7z-extract.txt
+          find /tmp/iss-bugatti-audit/nested -type f \( -iname '*.glb' -o -iname '*.gltf' \) -printf 'EXTRACTED_MODEL|%s|%p\n' | tee /tmp/iss-bugatti-audit/models.txt
+          test -s /tmp/iss-bugatti-audit/models.txt
+          echo 'BUGATTI_NESTED_EXTRACTION_AUDIT=PASS'
