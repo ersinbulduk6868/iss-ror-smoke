@@ -1,0 +1,40 @@
+name: ISS Visual vNext RC2 storage bridge wake once
+
+on:
+  push:
+    branches:
+      - 'iss-test/visual-vnext-rc2-fullsource-preflight'
+    paths:
+      - '.github/workflows/visual-vnext-rc2-bridge-wake-once.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  wake-storage-bridge-runner:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    env:
+      WAKE_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-persistent-l4-runner-wake'
+      SUPABASE_ANON_JWT: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhuc3p2cWxncWF0c2didWNoZXd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDM0NjYsImV4cCI6MjEwMTY3OTQ2Nn0.anxhWIG2ufyD1DpHJUDz4LvLoRghHW4fDiN-vTj_auc'
+    steps:
+      - name: Wake existing runner for storage transport only
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail-with-body --silent --show-error --max-time 240 \
+            -H "apikey: $SUPABASE_ANON_JWT" \
+            -H "Authorization: Bearer $SUPABASE_ANON_JWT" \
+            -H 'Content-Type: application/json' \
+            --data '{}' \
+            "$WAKE_URL" | tee wake-response.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('wake-response.json',encoding='utf-8'))
+          assert d.get('success') is True, d
+          action=str(d.get('action') or '')
+          assert action in {'NOOP_RUNTIME_WINDOW_OK','VM_RUNTIME_WINDOW_REFRESHED','VM_STARTED_WITH_RUNTIME_WINDOW','NOOP_ACTIVE_JOB'}, d
+          print('STORAGE_BRIDGE_RUNNER_WAKE=PASS')
+          print('ACTION='+action)
+          PY
