@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import bpy
 from mathutils import Vector
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from blender import visual_vnext_rc2_bugatti_duel as wrapper
 
 duel = wrapper.duel
@@ -113,3 +117,7 @@ from blender import visual_vnext_rc2_bugatti_duel_readability as readability
 def main() -> None:
     duel.main()
     readability.postprocess_result()
+
+
+if __name__ == "__main__":
+    main()
