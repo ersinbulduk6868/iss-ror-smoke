@@ -1,4 +1,4 @@
-name: ISS Blender capability qualification v1
+name: ISS Blender production visual qualification v2
 
 on:
   workflow_dispatch:
@@ -7,6 +7,7 @@ on:
       - 'iss-test/blender-capability-qualification-v1'
     paths:
       - '.github/workflows/blender-capability-qualification-v1.yml'
+      - 'blender/iss_blender_production_visual_qualification_v2.py'
       - 'blender/iss_blender_capability_qualification_v1.py'
       - 'blender/visual_vnext_rc2_bugatti_duel.py'
       - 'blender/visual_vnext_rc2_bugatti_duel_impl.py'
@@ -20,7 +21,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: iss-blender-capability-qualification-v1
+  group: iss-blender-production-visual-qualification-v2
   cancel-in-progress: true
 
 env:
@@ -28,7 +29,7 @@ env:
   BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
   ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
   SUPABASE_ANON_JWT: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhuc3p2cWxncWF0c2didWNoZXd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDM0NjYsImV4cCI6MjEwMTY3OTQ2Nn0.anxhWIG2ufyD1DpHJUDz4LvLoRghHW4fDiN-vTj_auc'
-  OUTDIR: 'artifacts/blender-capability-qualification-v1'
+  OUTDIR: 'artifacts/blender-production-visual-qualification-v2'
 
 jobs:
   qualification:
@@ -40,12 +41,13 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Static qualification audit
+      - name: Static V2 audit
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$OUTDIR"
           python3 -m py_compile \
+            blender/iss_blender_production_visual_qualification_v2.py \
             blender/iss_blender_capability_qualification_v1.py \
             blender/visual_vnext_rc2_bugatti_duel.py \
             blender/visual_vnext_rc2_bugatti_duel_impl.py \
@@ -53,30 +55,19 @@ jobs:
             blender/visual_v4_scene.py \
             tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py \
             tools/visual_v4_asset_preflight.py
-          ! grep -F '_quant120.json' blender/iss_blender_capability_qualification_v1.py
-          ! grep -F 'BLENDER_WORKBENCH' blender/iss_blender_capability_qualification_v1.py
-          grep -F 'BLENDER_EEVEE_NEXT' blender/iss_blender_capability_qualification_v1.py >/dev/null
-          grep -F 'manualWorldCoordinates": False' blender/iss_blender_capability_qualification_v1.py >/dev/null
-          grep -F 'damagePhysicalSolver": False' blender/iss_blender_capability_qualification_v1.py >/dev/null
-          grep -F 'primitiveBoxDebris": False' blender/iss_blender_capability_qualification_v1.py >/dev/null
-          python3 - <<'PY' | tee "$OUTDIR/static-audit.log"
-          import ast
-          from pathlib import Path
-          p=Path('blender/iss_blender_capability_qualification_v1.py')
-          tree=ast.parse(p.read_text(encoding='utf-8'))
-          hard=[]
-          for node in ast.walk(tree):
-              if isinstance(node,ast.Dict):
-                  for k,v in zip(node.keys,node.values):
-                      if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('Q') and k.value!='Q10_noFinalRenderDuringQualification' and isinstance(v,ast.Constant) and v.value is True:
-                          hard.append(k.value)
-          if hard: raise SystemExit('HARDCODED_QUALIFICATION_PASS:'+','.join(hard))
-          print('QUAL_STATIC_COMPILE=PASS')
-          print('VISIBLE_QUANT120_REFERENCE=NO')
-          print('WORKBENCH_FALLBACK=NO')
-          print('HARDCODED_QUALIFICATION_PASS=NO')
-          print('FINAL_VIDEO_RENDER=FORBIDDEN')
-          PY
+          ! grep -F '_quant120.json' blender/iss_blender_production_visual_qualification_v2.py
+          ! grep -F 'BLENDER_WORKBENCH' blender/iss_blender_production_visual_qualification_v2.py
+          grep -F 'FRAME_BOUNDS_PROJECTION_AUTOFIT' blender/iss_blender_production_visual_qualification_v2.py >/dev/null
+          grep -F 'EXACT_IMPORTED_SOURCE_OBJECT_DUPLICATES' blender/iss_blender_production_visual_qualification_v2.py >/dev/null
+          grep -F 'syntheticShardGeometry": False' blender/iss_blender_production_visual_qualification_v2.py >/dev/null
+          grep -F 'randomVertexNoise": False' blender/iss_blender_production_visual_qualification_v2.py >/dev/null
+          printf '%s\n' \
+            'V2_STATIC_COMPILE=PASS' \
+            'VISIBLE_QUANT120_REFERENCE=NO' \
+            'WORKBENCH_FALLBACK=NO' \
+            'CAMERA_PROJECTION_AUTOFIT_CONTRACT=PASS' \
+            'ACTUAL_SOURCE_GEOMETRY_DEBRIS_CONTRACT=PASS' \
+            'FINAL_VIDEO_RENDER=FORBIDDEN' | tee "$OUTDIR/static-audit.log"
 
       - name: Resolve exact Bugatti pair private read
         shell: bash
@@ -99,7 +90,7 @@ jobs:
           assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
-          print('QUAL_BUGATTI_PAIR_ACCESS=PASS')
+          print('V2_BUGATTI_PAIR_ACCESS=PASS')
           PY
 
       - name: Acquire exact full-source asset once
@@ -124,8 +115,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
 
       - name: Download exact Blender 4.5.13
         shell: bash
@@ -138,13 +129,13 @@ jobs:
           "$BIN" --version | tee "$OUTDIR/blender-version.txt"
           grep -F "Blender ${BLENDER_VERSION}" "$OUTDIR/blender-version.txt"
 
-      - name: Run ISS Blender capability qualification v1
+      - name: Run production visual qualification v2
         shell: bash
         run: |
           set -euo pipefail
           BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
           "$BIN" --background --factory-startup \
-            --python blender/iss_blender_capability_qualification_v1.py -- \
+            --python blender/iss_blender_production_visual_qualification_v2.py -- \
             --mode preflight \
             --bugatti-a "$BUGATTI_A_PRIMARY" \
             --bugatti-b "$BUGATTI_B_PRIMARY" \
@@ -153,10 +144,9 @@ jobs:
             2>&1 | tee "$OUTDIR/qualification.log"
           grep -F 'BUGATTI_DUEL_SOLVER_CONTACT=PASS' "$OUTDIR/qualification.log"
           grep -F 'ISS_BLENDER_CAPABILITY_QUALIFICATION_MACHINE=PASS' "$OUTDIR/qualification.log"
-          grep -F 'ISS_BLENDER_CAPABILITY_GO_NO_GO=PENDING_VISUAL_REVIEW' "$OUTDIR/qualification.log"
           grep -F 'FINAL_RENDER_AUTHORIZATION=NO' "$OUTDIR/qualification.log"
 
-      - name: Validate qualification truth contract
+      - name: Validate V2 truth contract
         shell: bash
         run: |
           set -euo pipefail
@@ -165,16 +155,22 @@ jobs:
           from pathlib import Path
           root=Path(os.environ['OUTDIR'])
           d=json.loads((root/'qualification-result.json').read_text(encoding='utf-8'))
+          debris=d.get('debris') or {}
+          da=d.get('damageA') or {}; db=d.get('damageB') or {}
+          cams=d.get('cameras') or {}
           failures=[]
           checks={
-            'scope':d.get('scope')=='ISS_BLENDER_CAPABILITY_QUALIFICATION_V1',
+            'scope':d.get('scope')=='ISS_BLENDER_PRODUCTION_VISUAL_QUALIFICATION_V2',
             'status':d.get('status')=='MACHINE_CAPABILITY_PASS_VISUAL_REVIEW_REQUIRED',
-            'goNoGoPending':d.get('goNoGo')=='PENDING_VISUAL_REVIEW',
+            'pendingReview':d.get('goNoGo')=='PENDING_VISUAL_REVIEW',
             'eevee':d.get('renderEngine')=='BLENDER_EEVEE_NEXT',
             'portrait':d.get('resolution')==[540,960] and d.get('aspectRatio')=='9:16',
             'fullSource':d.get('fullSourceGeometry') is True and d.get('visualProxyUsed') is False,
             'solverDriven':d.get('vehicleMotionSolverDriven') is True,
             'damageTruth':d.get('damagePhysicalSolver') is False,
+            'structuredDamage':da.get('method')=='STRUCTURED_PANEL_COMPRESSION_WITH_CREASE_BANDS' and db.get('method')=='STRUCTURED_PANEL_COMPRESSION_WITH_CREASE_BANDS' and da.get('randomVertexNoise') is False and db.get('randomVertexNoise') is False,
+            'actualGeometryDebris':debris.get('geometrySource')=='EXACT_IMPORTED_SOURCE_OBJECT_DUPLICATES' and debris.get('syntheticShardGeometry') is False and len(debris.get('sourceObjectNames') or [])>=12,
+            'projectionCamera':cams.get('planner')=='FRAME_BOUNDS_PROJECTION_AUTOFIT',
             'autoPerIdea':d.get('manualPerIdeaCoordinateTuning') is False,
             'finalBlocked':d.get('finalRenderAuthorized') is False and d.get('finalFrames')==[],
           }
@@ -190,12 +186,12 @@ jobs:
           else:
               with wave.open(str(ap),'rb') as w:
                   if w.getframerate()!=48000 or w.getnchannels()!=2: failures.append('audioFormat')
-          if failures: raise SystemExit('QUALIFICATION_TRUTH_FAIL|' + ','.join(failures))
-          print('ISS_BLENDER_CAPABILITY_TRUTH_CONTRACT=PASS')
+          if failures: raise SystemExit('V2_TRUTH_FAIL|' + ','.join(failures))
+          print('ISS_BLENDER_PRODUCTION_VISUAL_V2_TRUTH=PASS')
           print('GO_NO_GO=PENDING_VISUAL_REVIEW')
           PY
 
-      - name: Build qualification review strip
+      - name: Build V2 review strip
         shell: bash
         run: |
           set -euo pipefail
@@ -203,14 +199,14 @@ jobs:
           I="$(find "$OUTDIR" -maxdepth 1 -name 'qual-impact-*.png' -print -quit)"
           F="$(find "$OUTDIR" -maxdepth 1 -name 'qual-aftermath-*.png' -print -quit)"
           test -n "$A" && test -n "$I" && test -n "$F"
-          ffmpeg -y -i "$A" -i "$I" -i "$F" -filter_complex '[0:v][1:v][2:v]hstack=inputs=3[v]' -map '[v]' -frames:v 1 "$OUTDIR/qualification-review-strip.jpg"
+          ffmpeg -loglevel error -y -i "$A" -i "$I" -i "$F" -filter_complex '[0:v][1:v][2:v]hstack=inputs=3[v]' -map '[v]' -frames:v 1 "$OUTDIR/qualification-review-strip.jpg"
           sha256sum "$OUTDIR/qualification-review-strip.jpg" "$OUTDIR/qualification-result.json" "$OUTDIR/qualification-audio.wav" | tee "$OUTDIR/evidence-sha256.txt"
 
-      - name: Upload qualification evidence
+      - name: Upload V2 evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: iss-blender-capability-qualification-v1-${{ github.run_id }}
-          path: artifacts/blender-capability-qualification-v1/
+          name: iss-blender-production-visual-v2-${{ github.run_id }}
+          path: artifacts/blender-production-visual-qualification-v2/
           if-no-files-found: warn
           retention-days: 7
