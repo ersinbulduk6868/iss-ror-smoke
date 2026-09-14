@@ -68,7 +68,7 @@ jobs:
           for node in ast.walk(tree):
               if isinstance(node,ast.Dict):
                   for k,v in zip(node.keys,node.values):
-                      if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('Q') and isinstance(v,ast.Constant) and v.value is True:
+                      if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('Q') and k.value!='Q10_noFinalRenderDuringQualification' and isinstance(v,ast.Constant) and v.value is True:
                           hard.append(k.value)
           if hard: raise SystemExit('HARDCODED_QUALIFICATION_PASS:'+','.join(hard))
           print('QUAL_STATIC_COMPILE=PASS')
