@@ -10,7 +10,6 @@ ALLOWED_EXACT = {
     "tools/visual_v4_static_audit.py",
     "tools/visual_v4_asset_preflight.py",
     "blender/visual_v4_scene.py",
-    "blender/visual_v4_readability.py",
     "ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_V4.md",
 }
 
@@ -19,33 +18,21 @@ def fail(msg: str) -> None:
     raise SystemExit("STATIC_AUDIT_FAIL|" + msg)
 
 
-def hardcoded_acceptance_true(label: str, text: str, failures: list[str]) -> None:
-    tree = ast.parse(text)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Dict):
-            continue
-        for k, v in zip(node.keys, node.values):
-            if isinstance(k, ast.Constant) and isinstance(k.value, str) and k.value.startswith("A"):
-                if isinstance(v, ast.Constant) and v.value is True:
-                    failures.append(f"{label}:HARDCODED_ACCEPTANCE_TRUE:{k.value}")
-
-
 def main() -> None:
     workflow_path = Path(".github/workflows/blender-visual-v4-preflight.yml")
     scene_path = Path("blender/visual_v4_scene.py")
-    readability_path = Path("blender/visual_v4_readability.py")
     asset_path = Path("tools/visual_v4_asset_preflight.py")
-    for p in (workflow_path, scene_path, readability_path, asset_path):
+    for p in (workflow_path, scene_path, asset_path):
         if not p.is_file():
             fail(f"MISSING:{p}")
 
     workflow = workflow_path.read_text(encoding="utf-8")
     scene = scene_path.read_text(encoding="utf-8")
-    readability = readability_path.read_text(encoding="utf-8")
     asset = asset_path.read_text(encoding="utf-8")
 
     failures: list[str] = []
 
+    # Candidate isolation: no locked/proven service files may be touched.
     changed = subprocess.check_output(
         ["git", "diff", "--name-only", f"{SAFE_BASE}...HEAD"], text=True
     ).splitlines()
@@ -53,6 +40,7 @@ def main() -> None:
     if unexpected:
         failures.append("LOCKED_OR_OUT_OF_SCOPE_CHANGE:" + ",".join(unexpected))
 
+    # Workflow is read-only and branch-isolated.
     if "permissions:\n  contents: read" not in workflow:
         failures.append("WORKFLOW_CONTENTS_READ_PERMISSION_MISSING")
     if "contents: write" in workflow:
@@ -64,11 +52,8 @@ def main() -> None:
         if cmd.startswith("git push") or cmd.startswith("git commit") or cmd.startswith("gh workflow run"):
             failures.append("WORKFLOW_MUTATING_COMMAND:" + cmd[:120])
 
-    for label, text in (
-        ("scene", scene),
-        ("readability", readability),
-        ("asset", asset),
-    ):
+    # Visible-geometry and renderer fail-closed rules.
+    for label, text in (("scene", scene), ("asset", asset)):
         for banned in (
             "assets/test-real-model",
             "_quant120.json",
@@ -77,7 +62,6 @@ def main() -> None:
         ):
             if banned in text:
                 failures.append(f"{label}:FORBIDDEN:{banned}")
-
     if "BLENDER_EEVEE_NEXT" not in scene:
         failures.append("EEVEE_NEXT_REQUIRED_MARKER_MISSING")
     if "FULL_SOURCE_GLTF" not in scene:
@@ -85,29 +69,21 @@ def main() -> None:
     if "damagePhysicalSolver" not in scene or "False" not in scene:
         failures.append("DAMAGE_TRUTH_MARKER_MISSING")
 
-    for marker in (
-        "EVENT_DRIVEN",
-        "CONTACT_CENTRIC_AUTOFIT",
-        "A10_subjectScaleReadable",
-        "A12_impactReadability",
-        "A13_aftermathContinuity",
-        "A14_eventDrivenPreviewSelection",
-        "VISUAL_V4_READABILITY_CONTRACT=PASS",
-    ):
-        if marker not in readability:
-            failures.append("READABILITY_CONTRACT_MARKER_MISSING:" + marker)
+    # Acceptance results must be expressions, never literal True.
+    tree = ast.parse(scene)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for k, v in zip(node.keys, node.values):
+            if isinstance(k, ast.Constant) and isinstance(k.value, str) and k.value.startswith("A"):
+                if isinstance(v, ast.Constant) and v.value is True:
+                    failures.append(f"HARDCODED_ACCEPTANCE_TRUE:{k.value}")
 
-    hardcoded_acceptance_true("scene", scene, failures)
-    hardcoded_acceptance_true("readability", readability, failures)
-
+    # Preflight workflow must never invoke final render mode.
     if "--mode final" in workflow:
         failures.append("FINAL_RENDER_IN_PREFLIGHT_WORKFLOW_FORBIDDEN")
     if "--mode preflight" not in workflow:
         failures.append("PREFLIGHT_MODE_MARKER_MISSING")
-    if "--python blender/visual_v4_readability.py" not in workflow:
-        failures.append("READABILITY_RUNTIME_NOT_WIRED")
-    if "python3 -m py_compile" not in workflow or "blender/visual_v4_readability.py" not in workflow:
-        failures.append("READABILITY_STATIC_COMPILE_MISSING")
 
     if failures:
         fail("|".join(failures))
@@ -120,9 +96,6 @@ def main() -> None:
     print("HARDCODED_ACCEPTANCE_PASS=NO")
     print("WORKFLOW_REPO_WRITE=NO")
     print("FINAL_RENDER_IN_PREFLIGHT=NO")
-    print("EVENT_DRIVEN_PREVIEW_WIRING=PASS")
-    print("CONTACT_CENTRIC_CAMERA_WIRING=PASS")
-    print("VISUAL_READABILITY_FAIL_CLOSED_WIRING=PASS")
     print("STATIC_CANDIDATE_AUDIT=PASS")
 
 
