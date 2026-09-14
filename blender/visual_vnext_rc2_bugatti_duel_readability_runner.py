@@ -6,7 +6,11 @@ from pathlib import Path
 import bpy
 from mathutils import Vector
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+HERE = Path(__file__).resolve()
+# RC2 modules use package imports from repo root; the readability shim also
+# retains one legacy top-level import. Bind both deterministic module roots.
+sys.path.insert(0, str(HERE.parents[1]))
+sys.path.insert(0, str(HERE.parent))
 from blender import visual_vnext_rc2_bugatti_duel as wrapper
 
 duel = wrapper.duel
@@ -109,8 +113,7 @@ def solver_contact_simulate(scene: bpy.types.Scene, a: dict, b: dict) -> dict:
 
 duel.simulate = solver_contact_simulate
 
-# Importing the readability layer binds damage/camera/preview behavior on top of
-# this exact solver implementation. contactfix already exposes duel during import.
+# Readability binds only presentation functions on top of the same RC2 duel.
 from blender import visual_vnext_rc2_bugatti_duel_readability as readability
 
 
