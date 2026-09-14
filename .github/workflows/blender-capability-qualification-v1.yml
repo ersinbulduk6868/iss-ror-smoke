@@ -1,0 +1,216 @@
+name: ISS Blender capability qualification v1
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'iss-test/blender-capability-qualification-v1'
+    paths:
+      - '.github/workflows/blender-capability-qualification-v1.yml'
+      - 'blender/iss_blender_capability_qualification_v1.py'
+      - 'blender/visual_vnext_rc2_bugatti_duel.py'
+      - 'blender/visual_vnext_rc2_bugatti_duel_impl.py'
+      - 'blender/visual_vnext_rc2_bugatti_duel_contactfix.py'
+      - 'blender/visual_v4_scene.py'
+      - 'tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py'
+      - 'tools/visual_v4_asset_preflight.py'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: iss-blender-capability-qualification-v1
+  cancel-in-progress: true
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhuc3p2cWxncWF0c2didWNoZXd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDM0NjYsImV4cCI6MjEwMTY3OTQ2Nn0.anxhWIG2ufyD1DpHJUDz4LvLoRghHW4fDiN-vTj_auc'
+  OUTDIR: 'artifacts/blender-capability-qualification-v1'
+
+jobs:
+  qualification:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 65
+    steps:
+      - name: Checkout isolated qualification candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Static qualification audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUTDIR"
+          python3 -m py_compile \
+            blender/iss_blender_capability_qualification_v1.py \
+            blender/visual_vnext_rc2_bugatti_duel.py \
+            blender/visual_vnext_rc2_bugatti_duel_impl.py \
+            blender/visual_vnext_rc2_bugatti_duel_contactfix.py \
+            blender/visual_v4_scene.py \
+            tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py \
+            tools/visual_v4_asset_preflight.py
+          ! grep -F '_quant120.json' blender/iss_blender_capability_qualification_v1.py
+          ! grep -F 'BLENDER_WORKBENCH' blender/iss_blender_capability_qualification_v1.py
+          grep -F 'BLENDER_EEVEE_NEXT' blender/iss_blender_capability_qualification_v1.py >/dev/null
+          grep -F 'manualWorldCoordinates": False' blender/iss_blender_capability_qualification_v1.py >/dev/null
+          grep -F 'damagePhysicalSolver": False' blender/iss_blender_capability_qualification_v1.py >/dev/null
+          grep -F 'primitiveBoxDebris": False' blender/iss_blender_capability_qualification_v1.py >/dev/null
+          python3 - <<'PY' | tee "$OUTDIR/static-audit.log"
+          import ast
+          from pathlib import Path
+          p=Path('blender/iss_blender_capability_qualification_v1.py')
+          tree=ast.parse(p.read_text(encoding='utf-8'))
+          hard=[]
+          for node in ast.walk(tree):
+              if isinstance(node,ast.Dict):
+                  for k,v in zip(node.keys,node.values):
+                      if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('Q') and isinstance(v,ast.Constant) and v.value is True:
+                          hard.append(k.value)
+          if hard: raise SystemExit('HARDCODED_QUALIFICATION_PASS:'+','.join(hard))
+          print('QUAL_STATIC_COMPILE=PASS')
+          print('VISIBLE_QUANT120_REFERENCE=NO')
+          print('WORKBENCH_FALLBACK=NO')
+          print('HARDCODED_QUALIFICATION_PASS=NO')
+          print('FINAL_VIDEO_RENDER=FORBIDDEN')
+          PY
+
+      - name: Resolve exact Bugatti pair private read
+        shell: bash
+        run: |
+          set -euo pipefail
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $SUPABASE_ANON_JWT" \
+            -H "Authorization: Bearer $SUPABASE_ANON_JWT" \
+            -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > "$OUTDIR/asset-access.json"
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open(os.environ['OUTDIR']+'/asset-access.json',encoding='utf-8'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY',d
+          a=d['asset']
+          assert a['expectedSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('QUAL_BUGATTI_PAIR_ACCESS=PASS')
+          PY
+
+      - name: Acquire exact full-source asset once
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee "$OUTDIR/asset-preflight.log"
+          grep -F 'BUGATTI_DUEL_EXACT_SHA=PASS' "$OUTDIR/asset-preflight.log"
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json',encoding='utf-8'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert d['status']=='PASS' and d['quant120Forbidden'] is True and d['visualProxyForbidden'] is True
+          assert a['identity']['binaryExact'] is True and b['identity']['binaryExact'] is True
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_A_PRIMARY='+a['primaryScene'])
+          print('BUGATTI_B_PRIMARY='+b['primaryScene'])
+          print('ASSET_MANIFEST=artifacts/visual-vnext-rc2-preflight/assets.json')
+          PY
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee "$OUTDIR/blender-version.txt"
+          grep -F "Blender ${BLENDER_VERSION}" "$OUTDIR/blender-version.txt"
+
+      - name: Run ISS Blender capability qualification v1
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup \
+            --python blender/iss_blender_capability_qualification_v1.py -- \
+            --mode preflight \
+            --bugatti-a "$BUGATTI_A_PRIMARY" \
+            --bugatti-b "$BUGATTI_B_PRIMARY" \
+            --asset-manifest "$ASSET_MANIFEST" \
+            --out "$OUTDIR" \
+            2>&1 | tee "$OUTDIR/qualification.log"
+          grep -F 'BUGATTI_DUEL_SOLVER_CONTACT=PASS' "$OUTDIR/qualification.log"
+          grep -F 'ISS_BLENDER_CAPABILITY_QUALIFICATION_MACHINE=PASS' "$OUTDIR/qualification.log"
+          grep -F 'ISS_BLENDER_CAPABILITY_GO_NO_GO=PENDING_VISUAL_REVIEW' "$OUTDIR/qualification.log"
+          grep -F 'FINAL_RENDER_AUTHORIZATION=NO' "$OUTDIR/qualification.log"
+
+      - name: Validate qualification truth contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee "$OUTDIR/validation.log"
+          import json,os,wave
+          from pathlib import Path
+          root=Path(os.environ['OUTDIR'])
+          d=json.loads((root/'qualification-result.json').read_text(encoding='utf-8'))
+          failures=[]
+          checks={
+            'scope':d.get('scope')=='ISS_BLENDER_CAPABILITY_QUALIFICATION_V1',
+            'status':d.get('status')=='MACHINE_CAPABILITY_PASS_VISUAL_REVIEW_REQUIRED',
+            'goNoGoPending':d.get('goNoGo')=='PENDING_VISUAL_REVIEW',
+            'eevee':d.get('renderEngine')=='BLENDER_EEVEE_NEXT',
+            'portrait':d.get('resolution')==[540,960] and d.get('aspectRatio')=='9:16',
+            'fullSource':d.get('fullSourceGeometry') is True and d.get('visualProxyUsed') is False,
+            'solverDriven':d.get('vehicleMotionSolverDriven') is True,
+            'damageTruth':d.get('damagePhysicalSolver') is False,
+            'autoPerIdea':d.get('manualPerIdeaCoordinateTuning') is False,
+            'finalBlocked':d.get('finalRenderAuthorized') is False and d.get('finalFrames')==[],
+          }
+          failures.extend(k for k,v in checks.items() if not v)
+          failures.extend(k for k,v in (d.get('machineGates') or {}).items() if v is not True)
+          previews=d.get('previews') or []
+          if len(previews)!=3: failures.append('previewCount')
+          for row in previews:
+              p=Path(row['path'])
+              if not p.is_file() or p.stat().st_size<30000: failures.append('preview:'+str(p))
+          ap=Path(d['audio']['path'])
+          if not ap.is_file(): failures.append('audioMissing')
+          else:
+              with wave.open(str(ap),'rb') as w:
+                  if w.getframerate()!=48000 or w.getnchannels()!=2: failures.append('audioFormat')
+          if failures: raise SystemExit('QUALIFICATION_TRUTH_FAIL|' + ','.join(failures))
+          print('ISS_BLENDER_CAPABILITY_TRUTH_CONTRACT=PASS')
+          print('GO_NO_GO=PENDING_VISUAL_REVIEW')
+          PY
+
+      - name: Build qualification review strip
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="$(find "$OUTDIR" -maxdepth 1 -name 'qual-approach-*.png' -print -quit)"
+          I="$(find "$OUTDIR" -maxdepth 1 -name 'qual-impact-*.png' -print -quit)"
+          F="$(find "$OUTDIR" -maxdepth 1 -name 'qual-aftermath-*.png' -print -quit)"
+          test -n "$A" && test -n "$I" && test -n "$F"
+          ffmpeg -y -i "$A" -i "$I" -i "$F" -filter_complex '[0:v][1:v][2:v]hstack=inputs=3[v]' -map '[v]' -frames:v 1 "$OUTDIR/qualification-review-strip.jpg"
+          sha256sum "$OUTDIR/qualification-review-strip.jpg" "$OUTDIR/qualification-result.json" "$OUTDIR/qualification-audio.wav" | tee "$OUTDIR/evidence-sha256.txt"
+
+      - name: Upload qualification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-blender-capability-qualification-v1-${{ github.run_id }}
+          path: artifacts/blender-capability-qualification-v1/
+          if-no-files-found: warn
+          retention-days: 7
