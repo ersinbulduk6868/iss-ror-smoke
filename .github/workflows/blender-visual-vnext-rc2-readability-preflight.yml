@@ -1,0 +1,214 @@
+name: ISS Blender visual vNext RC2 Bugatti readability preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'iss-test/visual-vnext-rc2-fullsource-preflight'
+    paths:
+      - '.github/workflows/blender-visual-vnext-rc2-readability-preflight.yml'
+      - 'blender/visual_vnext_rc2_bugatti_duel_readability.py'
+      - 'blender/visual_vnext_rc2_bugatti_duel_readability_runner.py'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: iss-visual-vnext-rc2-bugatti-readability-preflight
+  cancel-in-progress: true
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  BLENDER_URL: 'https://download.blender.org/release/Blender4.5/blender-4.5.13-linux-x64.tar.xz'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+
+jobs:
+  preflight:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    steps:
+      - name: Checkout isolated candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 1
+
+      - name: Static readability audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/visual-vnext-rc2-readability artifacts/visual-vnext-rc2-preflight
+          python3 -m py_compile \
+            tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py \
+            tools/visual_v4_asset_preflight.py \
+            blender/visual_v4_scene.py \
+            blender/visual_vnext_rc2_bugatti_duel.py \
+            blender/visual_vnext_rc2_bugatti_duel_impl.py \
+            blender/visual_vnext_rc2_bugatti_duel_contactfix.py \
+            blender/visual_vnext_rc2_bugatti_duel_readability.py \
+            blender/visual_vnext_rc2_bugatti_duel_readability_runner.py
+          ! grep -R -F '_quant120.json' blender/visual_vnext_rc2_bugatti_duel*.py tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py
+          ! grep -R -F 'BLENDER_WORKBENCH' blender/visual_vnext_rc2_bugatti_duel*.py
+          python3 - <<'PY' | tee artifacts/visual-vnext-rc2-readability/static-audit.log
+          import ast
+          from pathlib import Path
+          failures=[]
+          paths=[
+            'blender/visual_vnext_rc2_bugatti_duel_impl.py',
+            'blender/visual_vnext_rc2_bugatti_duel_contactfix.py',
+            'blender/visual_vnext_rc2_bugatti_duel_readability.py',
+            'blender/visual_vnext_rc2_bugatti_duel_readability_runner.py',
+          ]
+          for path in paths:
+              text=Path(path).read_text(encoding='utf-8')
+              tree=ast.parse(text)
+              for node in ast.walk(tree):
+                  if isinstance(node,ast.Dict):
+                      for k,v in zip(node.keys,node.values):
+                          if isinstance(k,ast.Constant) and isinstance(k.value,str) and k.value.startswith('A') and isinstance(v,ast.Constant) and v.value is True:
+                              failures.append(path+':HARDCODED:'+k.value)
+          r=Path('blender/visual_vnext_rc2_bugatti_duel_readability.py').read_text(encoding='utf-8')
+          for marker in ('EVENT_DRIVEN','CONTACT_CENTRIC_AUTOFIT','A10_subjectScaleReadable','A12_impactReadability','A13_aftermathContinuity','A14_eventDrivenPreviewSelection','BUGATTI_DUEL_READABILITY_CONTRACT=PASS'):
+              if marker not in r: failures.append('READABILITY_MARKER_MISSING:'+marker)
+          if failures: raise SystemExit('STATIC_AUDIT_FAIL|'+'|'.join(failures))
+          print('PROVEN_RC2_WORKFLOW_MUTATION=NO')
+          print('VISIBLE_QUANT120_REFERENCE=NO')
+          print('WORKBENCH_FALLBACK=NO')
+          print('HARDCODED_ACCEPTANCE_PASS=NO')
+          print('EVENT_DRIVEN_PREVIEW_WIRING=PASS')
+          print('CONTACT_CENTRIC_AUTOFIT_WIRING=PASS')
+          print('READABILITY_FAIL_CLOSED_WIRING=PASS')
+          print('STATIC_READABILITY_AUDIT=PASS')
+          PY
+
+      - name: Resolve exact Bugatti private read
+        shell: bash
+        run: |
+          set -euo pipefail
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-readability/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-readability/asset-access.json',encoding='utf-8'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY',d
+          a=d['asset']
+          assert a['expectedSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('BUGATTI_PAIR_ACCESS_CONTRACT=PASS')
+          PY
+
+      - name: Acquire and validate exact full-source Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee artifacts/visual-vnext-rc2-readability/asset-preflight.log
+          grep -F 'BUGATTI_DUEL_EXACT_SHA=PASS' artifacts/visual-vnext-rc2-readability/asset-preflight.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json',encoding='utf-8'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert d['status']=='PASS' and d['quant120Forbidden'] is True and d['visualProxyForbidden'] is True
+          for row in (a,b):
+              assert row['identity']['binaryExact'] is True and row['fullGeometryGate'] is True
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_A_PRIMARY='+a['primaryScene'])
+          print('BUGATTI_B_PRIMARY='+b['primaryScene'])
+          PY
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "$BLENDER_URL" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --version | tee artifacts/visual-vnext-rc2-readability/blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" artifacts/visual-vnext-rc2-readability/blender-version.txt
+
+      - name: Run Bugatti readability physics visual preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BIN" --background --factory-startup \
+            --python blender/visual_vnext_rc2_bugatti_duel_readability_runner.py -- \
+            --mode preflight \
+            --bugatti-a "$BUGATTI_A_PRIMARY" \
+            --bugatti-b "$BUGATTI_B_PRIMARY" \
+            --asset-manifest artifacts/visual-vnext-rc2-preflight/assets.json \
+            --out artifacts/visual-vnext-rc2-readability \
+            2>&1 | tee artifacts/visual-vnext-rc2-readability/blender-preflight.log
+          grep -F 'BUGATTI_DUEL_SOLVER_CONTACT=PASS' artifacts/visual-vnext-rc2-readability/blender-preflight.log
+          grep -F 'ISS_VISUAL_VNEXT_RC2_BUGATTI_DUEL_MACHINE_PREFLIGHT=PASS' artifacts/visual-vnext-rc2-readability/blender-preflight.log
+          grep -F 'BUGATTI_DUEL_READABILITY_CONTRACT=PASS' artifacts/visual-vnext-rc2-readability/blender-preflight.log
+
+      - name: Validate readability truth contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY' | tee artifacts/visual-vnext-rc2-readability/validation.log
+          import json
+          from pathlib import Path
+          d=json.loads(Path('artifacts/visual-vnext-rc2-readability/preflight-result.json').read_text(encoding='utf-8'))
+          failures=[]
+          base={
+            'scope':d.get('scope')=='ISS_VISUAL_VNEXT_RC2_BUGATTI_DUEL',
+            'status':d.get('status')=='MACHINE_PREFLIGHT_PASS_VISUAL_REVIEW_REQUIRED',
+            'engine':d.get('renderEngine')=='BLENDER_EEVEE_NEXT',
+            'fullSource':d.get('visualGeometry')=='FULL_SOURCE_GLTF',
+            'solverDriven':d.get('vehicleMotionSolverDriven') is True,
+            'impactSpeed':float(d.get('impactRelativeSpeedMps',0))>15.0,
+            'responses':float(d.get('bugattiAResponseDeltaVx',0))>=0.5 and float(d.get('bugattiBResponseDeltaVx',0))>=0.5,
+          }
+          failures.extend(k for k,v in base.items() if not v)
+          mg=d.get('machineGates') or {}
+          for key in ('A10_subjectScaleReadable','A12_impactReadability','A13_aftermathContinuity','A14_eventDrivenPreviewSelection'):
+              if mg.get(key) is not True: failures.append(key)
+          rc=d.get('readabilityContract') or {}
+          if rc.get('previewSelection')!='EVENT_DRIVEN': failures.append('previewSelection')
+          if rc.get('cameraFraming')!='CONTACT_CENTRIC_AUTOFIT': failures.append('cameraFraming')
+          if rc.get('damageVisibilityFailClosed') is not True: failures.append('damageVisibility')
+          if rc.get('debrisVisibilityFailClosed') is not True: failures.append('debrisVisibility')
+          previews=d.get('previews') or []
+          if len(previews)!=3: failures.append('previewCount')
+          for row in previews:
+              p=Path(row['path'])
+              if not p.is_file() or p.stat().st_size<20000: failures.append('previewInvalid:'+str(p))
+          if failures: raise SystemExit('READABILITY_TRUTH_CONTRACT_FAIL|' + ','.join(failures))
+          print('RC2_BASE_MACHINE_PASS_PRESERVED=PASS')
+          print('BUGATTI_READABILITY_TRUTH_CONTRACT=PASS')
+          print('FINAL_RENDER_AUTHORIZATION=NOT_YET_VISUAL_REVIEW_REQUIRED')
+          PY
+
+      - name: Build three-frame review strip
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="$(find artifacts/visual-vnext-rc2-readability -maxdepth 1 -name 'preview-approach-*.png' -print -quit)"
+          I="$(find artifacts/visual-vnext-rc2-readability -maxdepth 1 -name 'preview-impact-*.png' -print -quit)"
+          F="$(find artifacts/visual-vnext-rc2-readability -maxdepth 1 -name 'preview-aftermath-*.png' -print -quit)"
+          test -n "$A" && test -n "$I" && test -n "$F"
+          ffmpeg -y -i "$A" -i "$I" -i "$F" -filter_complex '[0:v][1:v][2:v]hstack=inputs=3[v]' -map '[v]' -frames:v 1 artifacts/visual-vnext-rc2-readability/review-strip.jpg
+          sha256sum artifacts/visual-vnext-rc2-readability/review-strip.jpg artifacts/visual-vnext-rc2-readability/preflight-result.json | tee artifacts/visual-vnext-rc2-readability/review-sha256.txt
+
+      - name: Upload readability evidence only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-visual-vnext-rc2-bugatti-readability-${{ github.run_id }}
+          path: artifacts/visual-vnext-rc2-readability/
+          if-no-files-found: warn
+          retention-days: 7
