@@ -9,6 +9,7 @@ on:
       - 'tools/visual_v4_static_audit.py'
       - 'tools/visual_v4_asset_preflight.py'
       - 'blender/visual_v4_scene.py'
+      - 'blender/visual_v4_readability.py'
       - 'ISS_BATTLE_VIDEO_VISUAL_ACCEPTANCE_V4.md'
   workflow_dispatch:
 
@@ -38,9 +39,16 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p artifacts/visual-v4-preflight
-          python3 -m py_compile tools/visual_v4_static_audit.py tools/visual_v4_asset_preflight.py blender/visual_v4_scene.py
+          python3 -m py_compile \
+            tools/visual_v4_static_audit.py \
+            tools/visual_v4_asset_preflight.py \
+            blender/visual_v4_scene.py \
+            blender/visual_v4_readability.py
           python3 tools/visual_v4_static_audit.py 2>&1 | tee artifacts/visual-v4-preflight/static-audit.log
           grep -F 'STATIC_CANDIDATE_AUDIT=PASS' artifacts/visual-v4-preflight/static-audit.log
+          grep -F 'EVENT_DRIVEN_PREVIEW_WIRING=PASS' artifacts/visual-v4-preflight/static-audit.log
+          grep -F 'CONTACT_CENTRIC_CAMERA_WIRING=PASS' artifacts/visual-v4-preflight/static-audit.log
+          grep -F 'VISUAL_READABILITY_FAIL_CLOSED_WIRING=PASS' artifacts/visual-v4-preflight/static-audit.log
 
       - name: Acquire and validate exact full source geometry
         shell: bash
@@ -82,12 +90,12 @@ jobs:
           "$BIN" --version | tee artifacts/visual-v4-preflight/blender-version.txt
           grep -F "Blender ${BLENDER_VERSION}" artifacts/visual-v4-preflight/blender-version.txt
 
-      - name: Run physics camera lighting damage debris preflight
+      - name: Run physics camera lighting damage debris readability preflight
         shell: bash
         run: |
           set -euo pipefail
           BIN=".blender/blender-${BLENDER_VERSION}-linux-x64/blender"
-          "$BIN" --background --factory-startup --python blender/visual_v4_scene.py -- \
+          "$BIN" --background --factory-startup --python blender/visual_v4_readability.py -- \
             --mode preflight \
             --bugatti "$BUGATTI_PRIMARY" \
             --bulldozer "$BULLDOZER_PRIMARY" \
@@ -95,6 +103,7 @@ jobs:
             --out artifacts/visual-v4-preflight \
             2>&1 | tee artifacts/visual-v4-preflight/blender-preflight.log
           grep -F 'ISS_VISUAL_V4_MACHINE_PREFLIGHT=PASS' artifacts/visual-v4-preflight/blender-preflight.log
+          grep -F 'VISUAL_V4_READABILITY_CONTRACT=PASS' artifacts/visual-v4-preflight/blender-preflight.log
 
       - name: Validate machine preflight truth contract
         shell: bash
@@ -103,6 +112,7 @@ jobs:
           python3 - <<'PY' | tee artifacts/visual-v4-preflight/validation.log
           import json
           from pathlib import Path
+
           p=Path('artifacts/visual-v4-preflight/preflight-result.json')
           d=json.loads(p.read_text(encoding='utf-8'))
           failures=[]
@@ -118,16 +128,41 @@ jobs:
           if d.get('debrisReleaseImpactTriggered') is not True: failures.append('debrisReleaseImpactTriggered')
           if d.get('cameraShotCount',0)<3: failures.append('cameraShotCount')
           if d.get('resolution')!=[960,540]: failures.append('preflightResolution')
+
+          rc=d.get('readabilityContract') or {}
+          if rc.get('version')!='VISUAL_V4_READABILITY_V1': failures.append('readabilityContract')
+          if rc.get('previewSelection')!='EVENT_DRIVEN': failures.append('previewSelection')
+          if rc.get('cameraFraming')!='CONTACT_CENTRIC_AUTOFIT': failures.append('cameraFraming')
+          if rc.get('damageVisibilityFailClosed') is not True: failures.append('damageVisibilityFailClosed')
+          if rc.get('debrisVisibilityFailClosed') is not True: failures.append('debrisVisibilityFailClosed')
+
           mg=d.get('machineGates') or {}
+          required_gates=(
+              'A10_subjectScaleReadable',
+              'A12_impactReadability',
+              'A13_aftermathContinuity',
+              'A14_eventDrivenPreviewSelection',
+          )
           failures.extend(k for k,v in mg.items() if v is not True)
+          failures.extend(k for k in required_gates if mg.get(k) is not True)
+
           previews=d.get('previews') or []
           if len(previews)!=3: failures.append('previewCount')
+          labels=[row.get('label') for row in previews]
+          if labels!=['approach','impact','aftermath']: failures.append('previewLabels')
           for row in previews:
               q=Path(row['path'])
-              if not q.is_file() or q.stat().st_size < 20000: failures.append('previewInvalid:'+str(q))
+              if not q.is_file() or q.stat().st_size < 20000:
+                  failures.append('previewInvalid:'+str(q))
+              rr=row.get('readability') or {}
+              if rr.get('bothActorsFullyVisible') is not True:
+                  failures.append('actorsNotVisible:'+str(row.get('label')))
           if not d.get('visualReviewRequired'): failures.append('visualReviewRequiredMissing')
-          if failures: raise SystemExit('MACHINE_PREFLIGHT_VALIDATION_FAIL|'+','.join(failures))
+
+          if failures:
+              raise SystemExit('MACHINE_PREFLIGHT_VALIDATION_FAIL|'+','.join(failures))
           print('MACHINE_PREFLIGHT_TRUTH_CONTRACT=PASS')
+          print('VISUAL_READABILITY_MACHINE_GATES=PASS')
           print('FINAL_RENDER_AUTHORIZATION=NOT_YET_VISUAL_REVIEW_REQUIRED')
           PY
 
