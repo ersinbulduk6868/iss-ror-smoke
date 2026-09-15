@@ -13,7 +13,9 @@ TERMINAL = TERMINAL_SUCCESS | TERMINAL_FAILURE
 @dataclass
 class BattleLifecycle:
     physically_resolved: set[str] = field(default_factory=set)
+    causally_resolved: set[str] = field(default_factory=set)
     qualified_attackers: dict[str, set[str]] = field(default_factory=dict)
+    qualified_contact_counts: dict[str, int] = field(default_factory=dict)
     damage_earned: set[str] = field(default_factory=set)
 
     def dependencies_ready(
@@ -23,7 +25,7 @@ class BattleLifecycle:
     ) -> bool:
         for dependency in event.dependencies:
             state = states[dependency]
-            if dependency in self.physically_resolved:
+            if dependency in self.causally_resolved:
                 continue
             if state.status in TERMINAL_SUCCESS:
                 continue
@@ -37,15 +39,30 @@ class BattleLifecycle:
         *,
         damage_earned: bool,
     ) -> None:
-        self.physically_resolved.add(event.event_id)
-        self.qualified_attackers.setdefault(event.event_id, set()).add(attacker_id)
+        event_id = event.event_id
+        self.physically_resolved.add(event_id)
+        self.qualified_attackers.setdefault(event_id, set()).add(attacker_id)
+        self.qualified_contact_counts[event_id] = (
+            self.qualified_contact_counts.get(event_id, 0) + 1
+        )
         if damage_earned:
-            self.damage_earned.add(event.event_id)
+            self.damage_earned.add(event_id)
+
+        min_contacts, min_distinct = self.requirements(event)
+        distinct = len(self.qualified_attackers.get(event_id, set()))
+        contacts = self.qualified_contact_counts.get(event_id, 0)
+        damage_ok = (not event.damage_required) or event_id in self.damage_earned
+        if contacts >= min_contacts and distinct >= min_distinct and damage_ok:
+            self.causally_resolved.add(event_id)
 
     @staticmethod
     def _execution_requirements(event: RuntimeEvent) -> dict[str, Any]:
         raw = event.original or {}
-        for key in ("runtimeAcceptance", "executionRequirements", "battleExecutionContract"):
+        for key in (
+            "runtimeAcceptance",
+            "executionRequirements",
+            "battleExecutionContract",
+        ):
             value = raw.get(key)
             if isinstance(value, dict):
                 return value
@@ -82,7 +99,9 @@ class BattleLifecycle:
             return True
         min_contacts, min_distinct = self.requirements(event)
         distinct = len(self.qualified_attackers.get(event.event_id, set()))
-        if state.contact_count < min_contacts:
+        internal_contacts = self.qualified_contact_counts.get(event.event_id, 0)
+        effective_contacts = min(state.contact_count, internal_contacts)
+        if effective_contacts < min_contacts:
             return False
         if distinct < min_distinct:
             return False
@@ -102,7 +121,9 @@ class BattleLifecycle:
     def snapshot(self) -> dict[str, Any]:
         return {
             "physicallyResolvedEvents": sorted(self.physically_resolved),
+            "causallyResolvedEvents": sorted(self.causally_resolved),
             "damageEarnedEvents": sorted(self.damage_earned),
+            "qualifiedContactCounts": dict(sorted(self.qualified_contact_counts.items())),
             "qualifiedAttackers": {
                 event_id: sorted(values)
                 for event_id, values in sorted(self.qualified_attackers.items())
