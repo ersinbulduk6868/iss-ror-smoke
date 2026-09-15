@@ -21,11 +21,13 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  id-token: write
 
 env:
   BLENDER_VERSION: '4.5.13'
   EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
-  SOURCE_ARTIFACT_ID: '10389794595'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYXNlIiwicmVmIjoiaG5zenZxbGdxYXRzZ2J1Y2hld3QiLCJyb2xlIjoiYW5vbiIsImlhdCI6MTc4NjEwMzQ2NiwiZXhwIjoyMTAxNjc5NDY2fQ.anxhWIG2ufyD1DpHJUDz4LvLoRghHW4fDiN-vTj_auc'
 
 jobs:
   g04:
@@ -51,31 +53,31 @@ jobs:
           grep -q '"status": "PASS"' candidate40-g04-property.log
           echo 'CANDIDATE40_G04_ZERO_COST_ACCEPTANCE=PASS'
 
-      - name: Reuse proven exact Bugatti access receipt
+      - name: Resolve fresh exact Bugatti private read
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/visual-vnext-rc2-preflight /tmp/c40-source
-          curl --fail --location --silent --show-error \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H 'Accept: application/vnd.github+json' \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
-            -o /tmp/c40-source.zip
-          unzip -q /tmp/c40-source.zip -d /tmp/c40-source
-          cp /tmp/c40-source/artifacts/visual-vnext-rc2-preflight/asset-access.json artifacts/visual-vnext-rc2-preflight/asset-access.json
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $SUPABASE_ANON_JWT" \
+            -H "Authorization: Bearer $SUPABASE_ANON_JWT" \
+            -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
           python3 - <<'PY'
           import json, os
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json',encoding='utf-8'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
           a=d['asset']
-          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY'
           assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA']
           assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
+          assert a['transport']=='SUPABASE_PRIVATE_STORAGE_SIGNED_READ'
           assert str(a['signedUrl']).startswith('https://')
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
-          print('PROVEN_BUGATTI_ACCESS_RECEIPT=PASS')
+          print('FRESH_BUGATTI_PAIR_ACCESS_CONTRACT=PASS')
           PY
 
       - name: Acquire and validate exact full-source Bugatti
