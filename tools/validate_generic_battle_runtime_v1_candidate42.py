@@ -11,7 +11,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from blender.iss_battle_runtime_contact_truth import (
+    OUTER_AUTHORITY_MODEL,
     PAIRWISE_RESPONSE_MODEL,
+    ContactOuterAuthorityGate,
+    ContactOuterAuthoritySample,
     PairwiseSolverResponseOracle,
     PairwiseSolverSample,
 )
@@ -46,6 +49,29 @@ def require(label: str, expected: bool, receipt) -> dict:
     return {"status": "PASS", "qualified": receipt.qualified, "reason": receipt.reason}
 
 
+def outer(
+    *,
+    intended="target",
+    observed="target",
+    handoff=True,
+    motor_zero=True,
+    gap=0.0,
+    gap_tol=0.10,
+    semantic=0.05,
+    semantic_tol=0.50,
+):
+    return ContactOuterAuthorityGate.evaluate(ContactOuterAuthoritySample(
+        intended_target_id=intended,
+        observed_pair_target_id=observed,
+        controller_handoff=handoff,
+        motor_authority_zero=motor_zero,
+        locality_gap_m=gap,
+        locality_tolerance_m=gap_tol,
+        semantic_distance_m=semantic,
+        semantic_tolerance_m=semantic_tol,
+    ))
+
+
 def main() -> None:
     preserved = {}
     for rel, expected in EXPECTED_BLOBS.items():
@@ -54,35 +80,47 @@ def main() -> None:
             raise SystemExit(f"G05_PRESERVED_SOURCE_CHANGED:{rel}:{actual}:{expected}")
         preserved[rel] = actual
 
-    equal_mass = require(
-        "equalMassNativeCollision", True,
-        sample(1450, 1450, (5,0,0), (-5,0,0), (-1,0,0), (1,0,0)),
-    )
-    asymmetric_mass = require(
-        "asymmetricMassNativeCollision", True,
-        sample(1500, 10000, (8,0,0), (0,0,0), (-2,0,0), (1.5,0,0)),
-    )
-    rolling_friction = require(
-        "rollingFrictionFalsePositive", False,
-        sample(1450, 1450, (5,0,0), (-5,0,0), (4.98,0,0), (-4.98,0,0)),
-    )
-    unilateral_wall = require(
-        "unilateralWallImpact", False,
-        sample(1450, 1450, (5,0,0), (0,0,0), (-2,0,0), (0,0,0)),
-    )
-    vertical_ground = require(
-        "verticalGroundResponse", False,
-        sample(1450, 1450, (5,0,-2), (-5,0,-2), (5,0,2), (-5,0,2)),
-    )
-    same_direction = require(
-        "sameDirectionExternalImpulse", False,
-        sample(1450, 1450, (5,0,0), (-5,0,0), (3,0,0), (-7,0,0)),
-    )
+    solver_properties = {
+        "equalMassNativeCollision": require(
+            "equalMassNativeCollision", True,
+            sample(1450, 1450, (5,0,0), (-5,0,0), (-1,0,0), (1,0,0)),
+        ),
+        "asymmetricMassNativeCollision": require(
+            "asymmetricMassNativeCollision", True,
+            sample(1500, 10000, (8,0,0), (0,0,0), (-2,0,0), (1.5,0,0)),
+        ),
+        "rollingFrictionRejected": require(
+            "rollingFrictionFalsePositive", False,
+            sample(1450, 1450, (5,0,0), (-5,0,0), (4.98,0,0), (-4.98,0,0)),
+        ),
+        "unilateralWallRejected": require(
+            "unilateralWallImpact", False,
+            sample(1450, 1450, (5,0,0), (0,0,0), (-2,0,0), (0,0,0)),
+        ),
+        "verticalGroundRejected": require(
+            "verticalGroundResponse", False,
+            sample(1450, 1450, (5,0,-2), (-5,0,-2), (5,0,2), (-5,0,2)),
+        ),
+        "sameDirectionExternalImpulseRejected": require(
+            "sameDirectionExternalImpulse", False,
+            sample(1450, 1450, (5,0,0), (-5,0,0), (3,0,0), (-7,0,0)),
+        ),
+    }
+
+    outer_properties = {
+        "validPair": require("outerValidPair", True, outer()),
+        "wrongTargetRejected": require("outerWrongTarget", False, outer(observed="third_actor")),
+        "controllerAuthorityRejected": require("outerControllerAuthority", False, outer(handoff=False, motor_zero=False)),
+        "nonAdjacentRejected": require("outerNonAdjacent", False, outer(gap=0.25, gap_tol=0.10)),
+        "semanticMismatchRejected": require("outerSemanticMismatch", False, outer(semantic=0.75, semantic_tol=0.50)),
+    }
 
     source = (ROOT / "blender/run_generic_battle_runtime_v1_candidate42.py").read_text(encoding="utf-8")
     required = [
         "RECIPROCAL_NATIVE_SOLVER_RESPONSE_V1",
+        "PAIRWISE_CONTACT_OUTER_AUTHORITY_V1",
         "PairwiseSolverResponseOracle",
+        "ContactOuterAuthorityGate",
         "controllerCutoffObserved",
         "nativeContactAuthority",
         "pairwiseLocalityGapM",
@@ -131,15 +169,10 @@ def main() -> None:
         "marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE42_G05_PROPERTY_ACCEPTANCE",
         "status": "PASS",
         "model": PAIRWISE_RESPONSE_MODEL,
+        "outerAuthorityModel": OUTER_AUTHORITY_MODEL,
         "preservedBlobShas": preserved,
-        "properties": {
-            "equalMassNativeCollision": equal_mass,
-            "asymmetricMassNativeCollision": asymmetric_mass,
-            "rollingFrictionRejected": rolling_friction,
-            "unilateralWallRejected": unilateral_wall,
-            "verticalGroundRejected": vertical_ground,
-            "sameDirectionExternalImpulseRejected": same_direction,
-        },
+        "solverProperties": solver_properties,
+        "outerAuthorityProperties": outer_properties,
         "g04SourceChanged": False,
         "candidate39SourceChanged": False,
         "obbFinalContactAuthority": False,
