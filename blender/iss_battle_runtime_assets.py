@@ -183,6 +183,24 @@ def move_objects_to_unlinked_collection(objects: list[bpy.types.Object], collect
         collection.objects.link(obj)
 
 
+def _assert_canonical_longitudinal_axis(binding: dict[str, Any], dims: Vector, axis: str) -> None:
+    rp = binding.get("runtimeProfile") or {}
+    locomotion = norm(rp.get("locomotionModel") or binding.get("locomotionModel") or "ground_differential").upper()
+    if locomotion.startswith("GROUND") and float(dims.y) > float(dims.x) * 1.35:
+        raise BlenderBattleRuntimeError(
+            f"ACTOR_CANONICAL_LONGITUDINAL_AXIS_INVALID:{binding.get('entityId')}:"
+            f"sourceForward={axis}:dims={list(dims)}"
+        )
+    marker(
+        "ACTOR_CANONICAL_FRAME_PASS",
+        entityId=binding.get("entityId"),
+        sourceForwardAxis=axis,
+        canonicalForwardAxis="X",
+        dimensions=[round(float(x), 6) for x in dims],
+        locomotionModel=locomotion,
+    )
+
+
 def normalize_prototype(binding: dict[str, Any], imported: list[bpy.types.Object]) -> tuple[Vector, dict[str, Vector], dict[str, str], str]:
     presentation = [obj for obj in mesh_objects(imported) if token_match(object_tokens(obj), PRESENTATION_TERMS)]
     presentation_ids = {id(obj) for obj in presentation}
@@ -217,6 +235,7 @@ def normalize_prototype(binding: dict[str, Any], imported: list[bpy.types.Object
     lo, hi = world_bounds(imported); dims = hi - lo
     if dims.x < 0.45 or dims.x > 60.0 or dims.y < 0.25 or dims.y > 25.0 or dims.z < 0.2 or dims.z > 20.0:
         raise BlenderBattleRuntimeError(f"ACTOR_NORMALIZED_DIMENSIONS_IMPLAUSIBLE:{binding.get('entityId')}:{list(dims)}")
+    _assert_canonical_longitudinal_axis(binding, dims, axis)
     top = [obj for obj in imported if obj.parent is root]
     for obj in top:
         mw = obj.matrix_world.copy(); obj.parent = None; obj.matrix_world = mw
