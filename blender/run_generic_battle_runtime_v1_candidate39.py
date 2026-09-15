@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,9 +14,8 @@ from mathutils import Vector
 
 from blender import iss_battle_runtime_assets as assets
 from blender import iss_blender_battle_runtime_v1_hardened as hardened
-from blender import run_generic_battle_runtime_v1_candidate34 as candidate34
 from blender import run_generic_battle_runtime_v1_candidate371 as candidate371
-from blender.iss_battle_runtime_core import ImpactEvidence, norm
+from blender.iss_battle_runtime_core import ImpactEvidence
 from blender.iss_battle_runtime_assets import BlenderBattleRuntimeError, marker
 
 CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_3_9"
@@ -42,6 +40,7 @@ def _filter_detached_ground_auxiliary(
     binding: dict[str, Any],
     imported: list[bpy.types.Object],
 ) -> list[dict[str, Any]]:
+    imported_names = [obj.name for obj in imported]
     meshes = assets.mesh_objects(imported)
     candidates = [obj for obj in meshes if not _explicit_presentation(obj)]
     substantial = [
@@ -97,7 +96,14 @@ def _filter_detached_ground_auxiliary(
         if obj is not None:
             bpy.data.objects.remove(obj, do_unlink=True)
     if remove_names:
-        imported[:] = [obj for obj in imported if obj.name not in remove_names]
+        remaining: list[bpy.types.Object] = []
+        for name in imported_names:
+            if name in remove_names:
+                continue
+            obj = bpy.data.objects.get(name)
+            if obj is not None:
+                remaining.append(obj)
+        imported[:] = remaining
         bpy.context.view_layer.update()
         marker(
             "DETACHED_GROUND_AUXILIARY_FILTERED",
@@ -117,7 +123,7 @@ def surface_semantic_normalize(
     dims, zones, evidence, axis = _original_normalize_prototype(binding, imported)
     lo, hi = assets.world_bounds(imported)
 
-    def projected(zone: str, point: Vector, *, axis_name: str, side: str) -> Vector:
+    def projected(point: Vector, *, axis_name: str, side: str) -> Vector:
         out = point.copy()
         if axis_name == "x":
             out.x = float(hi.x if side == "hi" else lo.x)
@@ -138,7 +144,7 @@ def surface_semantic_normalize(
         if source is None:
             continue
         before = source.copy()
-        after = projected(zone, source, axis_name=axis_name, side=side)
+        after = projected(source, axis_name=axis_name, side=side)
         zones[zone] = after
         evidence[zone] = SEMANTIC_SURFACE_MODEL
         marker(
@@ -188,12 +194,11 @@ def coalescing_detect_contacts(
         ).append(item)
 
     remove_ids: set[int] = set()
-    for key, rows in by_pair.items():
+    for rows in by_pair.values():
         directions = {(row.attacker_id, row.target_id) for row in rows}
         if len(rows) < 2 or len(directions) < 2:
             continue
-        reciprocal = any((b, a) in directions for a, b in directions)
-        if not reciprocal:
+        if not any((b, a) in directions for a, b in directions):
             continue
         rows.sort(key=lambda row: (row.event_id, row.attacker_id, row.target_id))
         primary = rows[0]
