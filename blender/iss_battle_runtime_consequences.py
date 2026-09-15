@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from typing import Any
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Vector
 
 from blender.iss_battle_runtime_core import ImpactEvidence, clamp, norm, stable_unit
 from blender.iss_battle_runtime_assets import (
@@ -86,6 +84,11 @@ def _closest_material(
     return best[1] if best else None
 
 
+def _ensure_basis(obj: bpy.types.Object) -> None:
+    if obj.data.shape_keys is None:
+        obj.shape_key_add(name="Basis", from_mix=False)
+
+
 def _deform_source_geometry(
     actor: RuntimeActor,
     evidence: ImpactEvidence,
@@ -126,9 +129,13 @@ def _deform_source_geometry(
             continue
         local_normal.normalize()
 
-        mesh = obj.data
+        _ensure_basis(obj)
+        key = obj.shape_key_add(
+            name=f"ISS_DAMAGE_F{int(evidence.frame):05d}",
+            from_mix=False,
+        )
         touched = False
-        for vertex in mesh.vertices:
+        for vertex in obj.data.vertices:
             delta = vertex.co - local_point
             distance = delta.length
             if distance > radius:
@@ -141,19 +148,32 @@ def _deform_source_geometry(
                 f"{actor.profile.entity_id}:{evidence.frame}:{obj.name}:{vertex.index}"
             )
             displacement = max_depth * falloff * jitter
-            vertex.co += local_normal * displacement
+            displaced = key.data[vertex.index].co + local_normal * displacement
 
             tangent = delta - local_normal * delta.dot(local_normal)
             if tangent.length > 1e-6:
                 tangent.normalize()
-                vertex.co -= tangent * displacement * 0.10 * evidence.severity
+                displaced -= tangent * displacement * 0.10 * evidence.severity
 
+            key.data[vertex.index].co = displaced
             affected += 1
             max_move = max(max_move, displacement)
             touched = True
 
         if touched:
-            mesh.update()
+            before = max(1, int(evidence.frame) - 1)
+            key.value = 0.0
+            key.keyframe_insert(data_path="value", frame=before)
+            key.value = 1.0
+            key.keyframe_insert(data_path="value", frame=int(evidence.frame))
+            if obj.data.shape_keys and obj.data.shape_keys.animation_data:
+                action = obj.data.shape_keys.animation_data.action
+                if action:
+                    for curve in action.fcurves:
+                        for point in curve.keyframe_points:
+                            point.interpolation = "LINEAR"
+        else:
+            obj.shape_key_remove(key)
 
     if affected <= 0:
         raise BlenderBattleRuntimeError(
@@ -204,6 +224,24 @@ def _make_irregular_shard(
     return obj
 
 
+def _key_debris_birth(obj: bpy.types.Object, frame: int) -> None:
+    before = max(1, int(frame) - 1)
+    obj.hide_render = True
+    obj.hide_viewport = True
+    obj.keyframe_insert(data_path="hide_render", frame=before)
+    obj.keyframe_insert(data_path="hide_viewport", frame=before)
+    obj.hide_render = False
+    obj.hide_viewport = False
+    obj.keyframe_insert(data_path="hide_render", frame=int(frame))
+    obj.keyframe_insert(data_path="hide_viewport", frame=int(frame))
+
+    rb = obj.rigid_body
+    rb.kinematic = True
+    rb.keyframe_insert(data_path="kinematic", frame=before)
+    rb.kinematic = False
+    rb.keyframe_insert(data_path="kinematic", frame=int(frame))
+
+
 def _spawn_debris(
     actor: RuntimeActor,
     evidence: ImpactEvidence,
@@ -252,7 +290,11 @@ def _spawn_debris(
             shard.data.materials.append(material)
 
         volume_proxy = max(1e-6, scale ** 3)
-        mass = clamp(volume_proxy * 520.0, 0.08, max(0.15, actor.profile.mass_kg * 0.0009))
+        mass = clamp(
+            volume_proxy * 520.0,
+            0.08,
+            max(0.15, actor.profile.mass_kg * 0.0009),
+        )
         add_rigid_body(
             shard,
             mass=mass,
@@ -260,6 +302,7 @@ def _spawn_debris(
             friction=0.72,
             restitution=clamp(0.04 + severity * 0.08, 0.03, 0.15),
         )
+        _key_debris_birth(shard, int(evidence.frame))
         shard["iss_debris_origin_event_frame"] = int(evidence.frame)
         shard["iss_debris_source_actor"] = actor.profile.entity_id
         shard["iss_debris_impact_severity"] = float(severity)
