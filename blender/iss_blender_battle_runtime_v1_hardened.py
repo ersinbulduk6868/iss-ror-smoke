@@ -16,7 +16,7 @@ from blender.iss_battle_runtime_consequences import ConsequenceEngine
 from blender.iss_battle_runtime_lifecycle import BattleLifecycle, TERMINAL
 from blender.iss_battle_runtime_assets import BlenderBattleRuntimeError, marker
 
-RUNTIME_VERSION = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_2_HARDENED"
+RUNTIME_VERSION = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_3_HARDENED"
 MIN_DAMAGE_SEVERITY = 0.055
 
 _lifecycle = BattleLifecycle()
@@ -131,8 +131,26 @@ def set_controls(
             target_point,
             current_velocity,
         )
-        cutoff = float(telemetry.get("controllerCutoff", 0.0)) >= 0.5
+
+        native_cutoff = float(telemetry.get("controllerCutoff", 0.0)) >= 0.5
+        base_cutoff = float(telemetry.get("contactCutoffDistance", 0.0))
+        distance = float(telemetry.get("distance", 0.0))
+        predictive_margin = max(
+            0.35,
+            min(1.50, float(current_velocity.length) * 0.08),
+        )
+        predictive_cutoff = bool(
+            event.requires_contact
+            and base_cutoff > 0.0
+            and distance <= base_cutoff + predictive_margin
+        )
+        cutoff = native_cutoff or predictive_cutoff
+        telemetry["predictiveCutoffMargin"] = predictive_margin if event.requires_contact else 0.0
+        telemetry["predictiveCutoff"] = 1.0 if predictive_cutoff else 0.0
         if cutoff:
+            telemetry["controllerCutoff"] = 1.0
+            left = 0.0
+            right = 0.0
             actor.rig.coast()
             _cutoff_frames[(event.event_id, entity)] = frame
         else:
