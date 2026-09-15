@@ -10,6 +10,7 @@ on:
       - 'blender/iss_battle_runtime_*.py'
       - 'blender/iss_blender_battle_runtime_v1.py'
       - 'blender/iss_blender_battle_runtime_v1_hardened.py'
+      - 'blender/run_generic_battle_runtime_v1_candidate3.py'
       - 'tools/validate_generic_battle_runtime_v1.py'
       - 'tools/validate_generic_battle_runtime_v1_candidate3.py'
       - 'tools/build_generic_battle_runtime_v1_preflight.py'
@@ -32,7 +33,6 @@ jobs:
     env:
       BLENDER_VERSION: '4.5.13'
       EXPECTED_ASSET_SHA: '0b2710a840d128aee53161277edb8cb77e1930d339f53585c6faece3f1dc2b1c'
-      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - name: Checkout exact isolated candidate
@@ -53,6 +53,7 @@ jobs:
             blender/iss_battle_runtime_lifecycle.py \
             blender/iss_blender_battle_runtime_v1.py \
             blender/iss_blender_battle_runtime_v1_hardened.py \
+            blender/run_generic_battle_runtime_v1_candidate3.py \
             tools/validate_generic_battle_runtime_v1.py \
             tools/validate_generic_battle_runtime_v1_candidate3.py \
             tools/build_generic_battle_runtime_v1_preflight.py \
@@ -106,13 +107,14 @@ jobs:
           "$BLENDER_BIN" \
             --background \
             --factory-startup \
-            --python blender/iss_blender_battle_runtime_v1_hardened.py \
+            --python blender/run_generic_battle_runtime_v1_candidate3.py \
             -- \
             --request artifacts/generic-battle-runtime-v1-preflight/request.json \
             --asset-map artifacts/generic-battle-runtime-v1-preflight/asset-map.json \
             --output-dir artifacts/generic-battle-runtime-v1-preflight \
             --render-previews \
             2>&1 | tee generic-runtime-blender.log
+          grep -q '"marker":"GENERIC_BATTLE_RUNTIME_PYTHON_BOOTSTRAP_PASS"' generic-runtime-blender.log
           grep -q '"marker": "GENERIC_BATTLE_RUNTIME_RESULT"' generic-runtime-blender.log
           echo 'GENERIC_BATTLE_RUNTIME_BLENDER_EXECUTION=COMPLETED'
 
