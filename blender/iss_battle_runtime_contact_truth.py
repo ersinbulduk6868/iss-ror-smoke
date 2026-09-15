@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass
 from typing import Iterable
 
 PAIRWISE_RESPONSE_MODEL = "RECIPROCAL_NATIVE_SOLVER_RESPONSE_V1"
+OUTER_AUTHORITY_MODEL = "PAIRWISE_CONTACT_OUTER_AUTHORITY_V1"
 
 
 def _v(value: Iterable[float]) -> tuple[float, float, float]:
@@ -93,12 +94,7 @@ class PairwiseSolverReceipt:
 
 
 class PairwiseSolverResponseOracle:
-    """Pair-specific physical-response oracle over solver-produced motion only.
-
-    It never predicts or controls contact.  It verifies that two actors exhibit a
-    reciprocal, directionally consistent momentum response after controller handoff.
-    Geometry/semantic locality are separate outer gates in the runtime.
-    """
+    """Pair-specific physical-response oracle over solver-produced motion only."""
 
     MIN_CLOSING_SPEED_MPS = 1.25  # identical to existing ImpactModel default
     MIN_IMPULSE_BALANCE_RATIO = 0.25
@@ -189,12 +185,78 @@ class PairwiseSolverResponseOracle:
     def _receipt(qualified: bool, reason: str, ma: float, mt: float) -> PairwiseSolverReceipt:
         reduced = (ma * mt) / (ma + mt)
         return PairwiseSolverReceipt(
-            qualified=qualified, reason=reason,
-            normal_closing_speed_mps=0.0, post_normal_closing_speed_mps=0.0,
-            closing_speed_drop_mps=0.0, relative_speed_mps=0.0,
-            response_attacker_mps=0.0, response_target_mps=0.0,
-            response_floor_mps=0.12, attacker_impulse_ns=0.0,
-            target_impulse_ns=0.0, impulse_balance_ratio=0.0,
-            impulse_opposition_cosine=-1.0, attacker_normal_alignment=-1.0,
-            target_normal_alignment=-1.0, reduced_mass_kg=reduced,
+            qualified=qualified,
+            reason=reason,
+            normal_closing_speed_mps=0.0,
+            post_normal_closing_speed_mps=0.0,
+            closing_speed_drop_mps=0.0,
+            relative_speed_mps=0.0,
+            response_attacker_mps=0.0,
+            response_target_mps=0.0,
+            response_floor_mps=0.12,
+            attacker_impulse_ns=0.0,
+            target_impulse_ns=0.0,
+            impulse_balance_ratio=0.0,
+            impulse_opposition_cosine=-1.0,
+            attacker_normal_alignment=-1.0,
+            target_normal_alignment=-1.0,
+            reduced_mass_kg=reduced,
+        )
+
+
+@dataclass(frozen=True)
+class ContactOuterAuthoritySample:
+    intended_target_id: str
+    observed_pair_target_id: str
+    controller_handoff: bool
+    motor_authority_zero: bool
+    locality_gap_m: float
+    locality_tolerance_m: float
+    semantic_distance_m: float
+    semantic_tolerance_m: float
+
+
+@dataclass(frozen=True)
+class ContactOuterAuthorityReceipt:
+    qualified: bool
+    reason: str
+    target_identity_pass: bool
+    controller_handoff_pass: bool
+    locality_pass: bool
+    semantic_pass: bool
+
+    def as_dict(self) -> dict[str, bool | str]:
+        return asdict(self)
+
+
+class ContactOuterAuthorityGate:
+    """Pure outer authority gate used by Candidate 4.2 and property acceptance."""
+
+    @staticmethod
+    def evaluate(sample: ContactOuterAuthoritySample) -> ContactOuterAuthorityReceipt:
+        target_identity = bool(sample.intended_target_id) and (
+            sample.intended_target_id == sample.observed_pair_target_id
+        )
+        handoff = bool(sample.controller_handoff and sample.motor_authority_zero)
+        locality = float(sample.locality_gap_m) <= float(sample.locality_tolerance_m)
+        semantic = float(sample.semantic_distance_m) <= float(sample.semantic_tolerance_m)
+
+        reason = "QUALIFIED"
+        qualified = True
+        if not target_identity:
+            qualified = False; reason = "TARGET_IDENTITY_MISMATCH"
+        elif not handoff:
+            qualified = False; reason = "CONTROLLER_AUTHORITY_NOT_RELEASED"
+        elif not locality:
+            qualified = False; reason = "PAIR_NOT_LOCALLY_ADJACENT"
+        elif not semantic:
+            qualified = False; reason = "SEMANTIC_ZONE_MISMATCH"
+
+        return ContactOuterAuthorityReceipt(
+            qualified=qualified,
+            reason=reason,
+            target_identity_pass=target_identity,
+            controller_handoff_pass=handoff,
+            locality_pass=locality,
+            semantic_pass=semantic,
         )
