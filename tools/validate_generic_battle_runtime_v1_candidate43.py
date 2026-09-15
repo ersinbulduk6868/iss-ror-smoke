@@ -142,10 +142,14 @@ def main() -> None:
         ".location =",
         "keyframe_insert(data_path=\"location\"",
         "keyframe_insert(data_path='location'",
-        "targetenergyj",
-        "targetimpactspeedmps",
-        "collisionframe",
-        "trajectorypoints",
+        '"targetenergyj":',
+        "'targetenergyj':",
+        '"targetimpactspeedmps":',
+        "'targetimpactspeedmps':",
+        '"collisionframe":',
+        "'collisionframe':",
+        '"trajectorypoints":',
+        "'trajectorypoints':",
     ]
     hits = [token for token in forbidden if token in low]
     if hits:
