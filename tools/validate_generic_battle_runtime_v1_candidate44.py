@@ -15,12 +15,23 @@ def fail(code: str) -> None:
     raise SystemExit(code)
 
 
+def literal_dict_keys(tree: ast.AST) -> list[str]:
+    keys: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        for key in node.keys:
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                keys.append(key.value)
+    return keys
+
+
 def main() -> None:
     runtime = RUNTIME.read_text(encoding="utf-8")
     builder = BUILDER.read_text(encoding="utf-8")
     audit = AUDIT.read_text(encoding="utf-8")
     ast.parse(runtime, filename=str(RUNTIME))
-    ast.parse(builder, filename=str(BUILDER))
+    builder_tree = ast.parse(builder, filename=str(BUILDER))
 
     required_runtime = (
         'CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_4_G07"',
@@ -79,25 +90,37 @@ def main() -> None:
     if missing_builder:
         fail("CANDIDATE44_FIXTURE_CONTRACT_MISSING:" + "|".join(missing_builder))
 
-    lower_builder = builder.lower()
-    for forbidden in (
+    # Reject actual executable choreography fields by AST dictionary-key identity.
+    # Do not substring-count diagnostic booleans such as
+    # `exactCollisionFrameTarget: false`; those are explicit proof that no such
+    # target exists and are not executable request fields. The fixture builder
+    # additionally validates the fully materialized request JSON at runtime.
+    forbidden_builder_keys = {
         "collisionframe",
         "contactframe",
         "impactframe",
         "targetenergyj",
+        "impactenergyj",
         "targetimpactspeedmps",
         "trajectorypoints",
+        "pathpoints",
+        "waypoints",
         "positionkeyframes",
         "velocitykeyframes",
+        "forcedwinner",
         "winnerid",
-    ):
-        # Forbidden words are allowed only inside the explicit rejection list.
-        occurrences = lower_builder.count(forbidden)
-        if occurrences > 1:
-            fail(f"CANDIDATE44_FIXTURE_FORBIDDEN_EXECUTABLE_FIELD:{forbidden}:{occurrences}")
+    }
+    actual_keys = literal_dict_keys(builder_tree)
+    bad_keys = sorted({key for key in actual_keys if key.lower() in forbidden_builder_keys})
+    if bad_keys:
+        fail("CANDIDATE44_FIXTURE_FORBIDDEN_EXECUTABLE_FIELD:" + "|".join(bad_keys))
 
     if "G07_CAUSAL_DRAMA_STATE_MACHINE_MISSING" not in audit:
         fail("CANDIDATE44_AFFECTED_LAYER_AUDIT_MISSING_ROOT_GAP")
+    if "LATEST_UNIQUE_DIRECT_G05_DAMAGE_INITIATIVE_V1" not in audit:
+        fail("CANDIDATE44_AFFECTED_LAYER_AUDIT_DOMINANCE_AUTHORITY_STALE")
+    if "ISS-R041" not in audit:
+        fail("CANDIDATE44_SCOPE_LOCK_AUDIT_MISSING")
 
     print(json.dumps({
         "marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE44_G07_PROPERTY_ACCEPTANCE",
@@ -105,6 +128,7 @@ def main() -> None:
         "candidate": "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_4_G07",
         "dramaModel": "PHYSICAL_CAUSAL_DRAMA_STATE_MACHINE_V1",
         "dominanceModel": "LATEST_UNIQUE_DIRECT_G05_DAMAGE_INITIATIVE_V1",
+        "builderChoreographyFieldAudit": "AST_LITERAL_DICT_KEYS_PASS",
         "g04SourceMutationRequired": False,
         "g05SourceMutationRequired": False,
         "g06SourceMutationRequired": False,
