@@ -1,0 +1,85 @@
+name: ISS G05 DriveRig self-collision topology probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-g05-drive-rig-self-collision-probe.yml'
+      - 'blender/iss_g05_drive_rig_self_collision_probe.py'
+
+concurrency:
+  group: iss-g05-drive-rig-self-collision-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BLENDER_VERSION: '4.5.13'
+
+jobs:
+  probe:
+    name: DriveRig constrained-pair native sweep audit
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact probe
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Static no-cheating audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile blender/iss_g05_drive_rig_self_collision_probe.py
+          grep -q 'disable_collisions' blender/iss_g05_drive_rig_self_collision_probe.py
+          grep -q 'convex_sweep_test' blender/iss_g05_drive_rig_self_collision_probe.py
+          ! grep -q 'obb_overlap_2d' blender/iss_g05_drive_rig_self_collision_probe.py
+          ! grep -Eq 'linear_velocity\s*=|keyframe_insert|targetEnergy|impactEnergy' blender/iss_g05_drive_rig_self_collision_probe.py
+          echo 'G05_DRIVE_RIG_PROBE_STATIC=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee g05-drive-rig-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" g05-drive-rig-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run DriveRig constrained self-collision comparison
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/iss_g05_drive_rig_self_collision_probe.py \
+            2>&1 | tee g05-drive-rig-self-collision-probe.log
+          grep -q '"marker": "G05_DRIVE_RIG_SELF_COLLISION_AUDIT"' g05-drive-rig-self-collision-probe.log
+          grep -q '"status": "PASS"' g05-drive-rig-self-collision-probe.log
+          grep -q '"rootCause": "CONSTRAINED_CHASSIS_WHEEL_COLLISIONS_ENABLED"' g05-drive-rig-self-collision-probe.log
+          grep -q '"genericFixProven": true' g05-drive-rig-self-collision-probe.log
+          echo 'G05_DRIVE_RIG_SELF_COLLISION_PROBE=PASS'
+
+      - name: Upload probe evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-g05-drive-rig-self-collision-probe-${{ github.run_id }}
+          path: |
+            g05-drive-rig-blender-version.log
+            g05-drive-rig-self-collision-probe.log
+          if-no-files-found: warn
+          retention-days: 14
