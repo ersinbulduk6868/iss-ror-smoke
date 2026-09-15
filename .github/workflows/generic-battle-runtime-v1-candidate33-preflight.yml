@@ -1,0 +1,167 @@
+name: ISS Generic Battle Runtime v1 Candidate 3.3 full-audited preflight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate33-preflight.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate33.py'
+      - 'blender/iss_battle_runtime_*.py'
+      - 'blender/iss_blender_battle_runtime_v1.py'
+      - 'blender/iss_blender_battle_runtime_v1_hardened.py'
+      - 'tools/build_generic_battle_runtime_v1_preflight.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate32_result.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate33_result.py'
+      - 'assets/generated/generic-hypercar-v1/**'
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-candidate33
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Generic battle runtime Candidate 3.3
+    runs-on: ubuntu-22.04
+    timeout-minutes: 55
+    env:
+      BLENDER_VERSION: '4.5.13'
+      EXPECTED_ASSET_SHA: '0b2710a840d128aee53161277edb8cb77e1930d339f53585c6faece3f1dc2b1c'
+
+    steps:
+      - name: Checkout exact Candidate 3.3
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Full static compile and lock-preservation audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_contract.py \
+            blender/iss_battle_runtime_models.py \
+            blender/iss_battle_runtime_core.py \
+            blender/iss_battle_runtime_assets.py \
+            blender/iss_battle_runtime_physics.py \
+            blender/iss_battle_runtime_consequences.py \
+            blender/iss_battle_runtime_camera.py \
+            blender/iss_battle_runtime_lifecycle.py \
+            blender/iss_blender_battle_runtime_v1.py \
+            blender/iss_blender_battle_runtime_v1_hardened.py \
+            blender/run_generic_battle_runtime_v1_candidate33.py \
+            tools/validate_generic_battle_runtime_v1.py \
+            tools/validate_generic_battle_runtime_v1_candidate3.py \
+            tools/build_generic_battle_runtime_v1_preflight.py \
+            tools/validate_generic_battle_runtime_v1_candidate32_result.py \
+            tools/validate_generic_battle_runtime_v1_candidate33_result.py
+          python3 tools/validate_generic_battle_runtime_v1_candidate3.py | tee generic-runtime-static.log
+          grep -q '"status": "PASS"' generic-runtime-static.log
+          grep -q 'MOTOR_ROLLING_SIGN = -1.0' blender/run_generic_battle_runtime_v1_candidate33.py
+          grep -q 'GEOMETRY_AWARE_OBJECT_OR_MATERIAL_FACE_REGION_V1' blender/run_generic_battle_runtime_v1_candidate33.py
+          grep -q 'polygon.material_index' blender/run_generic_battle_runtime_v1_candidate33.py
+          ! grep -Eq 'actor_(alpha|beta).*(location|rotation|linear_velocity|angular_velocity)' blender/run_generic_battle_runtime_v1_candidate33.py
+          ! grep -Eq 'SEMANTIC.*TOLERANCE|tolerance.*=' blender/run_generic_battle_runtime_v1_candidate33.py
+          echo 'GENERIC_BATTLE_RUNTIME_CANDIDATE33_STATIC=PASS'
+
+      - name: Build exact generic preflight fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(sha256sum assets/generated/generic-hypercar-v1/generic_hypercar.glb | awk '{print $1}')"
+          test "$ACTUAL_SHA" = "$EXPECTED_ASSET_SHA"
+          python3 tools/build_generic_battle_runtime_v1_preflight.py | tee generic-runtime-fixture.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_PREFLIGHT_FIXTURE_PASS"' generic-runtime-fixture.log
+          echo 'GENERIC_BATTLE_RUNTIME_FIXTURE=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xz-utils ffmpeg libgl1 libegl1 libx11-6 libxi6 libxrender1 \
+            libxfixes3 libxxf86vm1 libxkbcommon0
+          echo 'GENERIC_BATTLE_RUNTIME_DEPENDENCIES=PASS'
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          ARCHIVE=".blender/blender-${BLENDER_VERSION}.tar.xz"
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o "$ARCHIVE"
+          tar -xJf "$ARCHIVE" -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          test -x "$BLENDER_BIN"
+          "$BLENDER_BIN" --version | tee blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+          echo 'GENERIC_BATTLE_RUNTIME_BLENDER_VERSION=PASS'
+
+      - name: Run Candidate 3.3 solver-driven full preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" \
+            --background \
+            --factory-startup \
+            --python blender/run_generic_battle_runtime_v1_candidate33.py \
+            -- \
+            --request artifacts/generic-battle-runtime-v1-preflight/request.json \
+            --asset-map artifacts/generic-battle-runtime-v1-preflight/asset-map.json \
+            --output-dir artifacts/generic-battle-runtime-v1-preflight \
+            --render-previews \
+            2>&1 | tee generic-runtime-blender.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE33_ENGINE_HARDENING_PASS' generic-runtime-blender.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_RESULT"' generic-runtime-blender.log
+          echo 'GENERIC_BATTLE_RUNTIME_CANDIDATE33_EXECUTION=COMPLETED'
+
+      - name: Validate Candidate 3.3 machine truth contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_generic_battle_runtime_v1_candidate33_result.py \
+            --evidence artifacts/generic-battle-runtime-v1-preflight/generic-battle-runtime-v1-evidence.json \
+            | tee generic-runtime-result-validation.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE33_MACHINE_PREFLIGHT"' generic-runtime-result-validation.log
+          grep -q '"status": "PASS"' generic-runtime-result-validation.log
+          echo 'GENERIC_BATTLE_RUNTIME_CANDIDATE33_MACHINE_PREFLIGHT=PASS'
+
+      - name: Build review strip
+        if: success()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t FRAMES < <(find artifacts/generic-battle-runtime-v1-preflight -maxdepth 1 -type f -name 'preview-*.png' | sort)
+          test "${#FRAMES[@]}" -eq 3
+          ffmpeg -y \
+            -i "${FRAMES[0]}" \
+            -i "${FRAMES[1]}" \
+            -i "${FRAMES[2]}" \
+            -filter_complex 'hstack=inputs=3' \
+            -frames:v 1 \
+            artifacts/generic-battle-runtime-v1-preflight/review-strip.jpg
+          test -s artifacts/generic-battle-runtime-v1-preflight/review-strip.jpg
+          sha256sum artifacts/generic-battle-runtime-v1-preflight/review-strip.jpg \
+            | tee artifacts/generic-battle-runtime-v1-preflight/review-strip.sha256
+          echo 'GENERIC_BATTLE_RUNTIME_CANDIDATE33_REVIEW_STRIP=PASS'
+
+      - name: Upload Candidate 3.3 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate33-${{ github.run_id }}
+          path: |
+            generic-runtime-static.log
+            generic-runtime-fixture.log
+            generic-runtime-blender.log
+            generic-runtime-result-validation.log
+            blender-version.log
+            artifacts/generic-battle-runtime-v1-preflight/
+          if-no-files-found: warn
+          retention-days: 7
