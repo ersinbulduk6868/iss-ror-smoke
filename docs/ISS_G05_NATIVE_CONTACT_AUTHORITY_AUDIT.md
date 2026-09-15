@@ -72,3 +72,10 @@ It must accept physically consistent reciprocal responses across materially diff
 Candidate 4.2 is isolated from Candidate 4.0. It reuses the exact G04 controller and Candidate 3.9 asset/semantic code unchanged. It replaces only final contact authority with the pairwise native solver-response oracle above. The same Candidate 4.2 source must pass exact Bugatti and generic-hypercar fixtures without asset-name branches or per-fixture constants.
 
 G05 PASS is not Battle Runtime completion. G06 damage/persistent state, later dramatic progression, camera, visual believability and final production E2E remain downstream.
+
+## Candidate 4.2 execution record — 2026-09-15
+
+- Run `34996513316` failed before runtime because a static validator incorrectly required imported model constants to appear as literal strings in Candidate 4.2 source. Runtime was not executed; this is harness evidence, not a product failure.
+- Run `34996597786` passed the corrected property, preservation, no-cheating and negative-control suite. It then failed before asset acquisition because the existing private-storage Edge Function OIDC allowlist did not yet include `.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml`. Runtime was again not executed; this is transport authorization drift, not G05 physics evidence.
+- The private bucket policy remains unchanged. Edge Function `iss-final-video-transfer-once` version 12 adds only the exact Candidate 4.2 workflow/ref tuple to the existing GitHub OIDC allowlist. No broad repository authorization, public bucket access, threshold change, controller change or battle-runtime workaround was introduced.
+- Candidate 4.2 must now be re-run from the same machine acceptance workflow. G05 remains OPEN until exact Bugatti and generic hypercar both reach terminal machine acceptance with the same Candidate 4.2 source.
