@@ -117,8 +117,8 @@ def main() -> None:
 
     source = (ROOT / "blender/run_generic_battle_runtime_v1_candidate42.py").read_text(encoding="utf-8")
     required = [
-        "RECIPROCAL_NATIVE_SOLVER_RESPONSE_V1",
-        "PAIRWISE_CONTACT_OUTER_AUTHORITY_V1",
+        "PAIRWISE_RESPONSE_MODEL",
+        "OUTER_AUTHORITY_MODEL",
         "PairwiseSolverResponseOracle",
         "ContactOuterAuthorityGate",
         "controllerCutoffObserved",
