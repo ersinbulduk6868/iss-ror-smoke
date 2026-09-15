@@ -1,0 +1,234 @@
+name: ISS Generic Battle Runtime v1 Candidate 4.3 G06 causal persistence acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate43-g06.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate43.py'
+      - 'tools/build_generic_battle_runtime_v1_candidate43_g06.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate43.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate43_result.py'
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-candidate43-g06
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  g06:
+    name: Candidate 4.3 G06 causal damage and persistent state
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout exact Candidate 4.3
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: G06 property preservation and no-cheating acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/run_generic_battle_runtime_v1_candidate43.py \
+            tools/build_generic_battle_runtime_v1_candidate43_g06.py \
+            tools/validate_generic_battle_runtime_v1_candidate43.py \
+            tools/validate_generic_battle_runtime_v1_candidate43_result.py
+          python3 tools/validate_generic_battle_runtime_v1_candidate43.py | tee candidate43-g06-property.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE43_G06_PROPERTY_ACCEPTANCE"' candidate43-g06-property.log
+          grep -q '"status": "PASS"' candidate43-g06-property.log
+          grep -q '"damageThresholdChanged": false' candidate43-g06-property.log
+          grep -q '"contactThresholdChanged": false' candidate43-g06-property.log
+          grep -q '"actorPoseOrVelocityMutation": false' candidate43-g06-property.log
+          ! grep -q 'obb_overlap_2d(' blender/run_generic_battle_runtime_v1_candidate43.py
+          ! grep -q 'convex_sweep_test(' blender/run_generic_battle_runtime_v1_candidate43.py
+          echo 'CANDIDATE43_G06_ZERO_COST_ACCEPTANCE=PASS'
+
+      - name: Resolve fresh exact Bugatti private read
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          match=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not match:
+              raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(match.group(1))
+          PY
+            )"
+          fi
+          test -n "$ANON"
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $ANON" \
+            -H "Authorization: Bearer $ANON" \
+            -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json',encoding='utf-8'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          a=d['asset']
+          assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA']
+          assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
+          assert a['transport']=='SUPABASE_PRIVATE_STORAGE_SIGNED_READ'
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('CANDIDATE43_FRESH_BUGATTI_ACCESS=PASS')
+          PY
+
+      - name: Acquire and validate exact full-source Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee candidate43-bugatti-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' candidate43-bugatti-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json',encoding='utf-8'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert d['status']=='PASS' and d['visualProxyForbidden'] is True and d['quant120Forbidden'] is True
+          assert a['identity']['binaryExact'] is True and b['identity']['binaryExact'] is True
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          assert a['sourceIdentity']['uid']==b['sourceIdentity']['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+
+      - name: Build G06 exact Bugatti and generic persistence fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate43_g06.py --bugatti-primary "$BUGATTI_PRIMARY" | tee candidate43-g06-fixtures.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE43_G06_FIXTURES_PASS"' candidate43-g06-fixtures.log
+          grep -q '"firstExchangeDamageRequired": true' candidate43-g06-fixtures.log
+          grep -q '"laterDamagedActorEventRequired": true' candidate43-g06-fixtures.log
+          grep -q '"persistentDebrisRequired": true' candidate43-g06-fixtures.log
+          grep -q '"exactCollisionFrameTarget": false' candidate43-g06-fixtures.log
+          grep -q '"exactImpactEnergyTarget": false' candidate43-g06-fixtures.log
+          echo 'CANDIDATE43_G06_FIXTURES=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee candidate43-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" candidate43-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Preserve Candidate 3.9 asset and semantic regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/verify_generic_battle_runtime_v1_candidate39_assets.py -- \
+            --bugatti "$BUGATTI_PRIMARY" 2>&1 | tee candidate43-preserved-asset-regression.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE39_ASSET_REGRESSION"' candidate43-preserved-asset-regression.log
+          grep -q '"status": "PASS"' candidate43-preserved-asset-regression.log
+          echo 'CANDIDATE39_PRESERVED_ASSET_SEMANTIC_REGRESSION=PASS'
+
+      - name: Run Candidate 4.3 exact Bugatti G06 acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate43-g06/exact-bugatti
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate43.py -- \
+            --request "$D/request.json" \
+            --asset-map "$D/asset-map.json" \
+            --output-dir "$D" 2>&1 | tee candidate43-bugatti-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE43_G06_ENGINEERING_PASS' candidate43-bugatti-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate43-bugatti-runtime.log
+          grep -q 'G06_DAMAGE_STATE_FIRST_OBSERVED' candidate43-bugatti-runtime.log
+          grep -q 'G06_DAMAGED_STATE_CONSUMED_BY_LATER_EVENT' candidate43-bugatti-runtime.log
+          grep -q 'G06_PERSISTENCE_EVIDENCE_WRITTEN' candidate43-bugatti-runtime.log
+          grep -q '"success": true' candidate43-bugatti-runtime.log
+          test -s "$D/g06-persistence-evidence.json"
+          echo 'CANDIDATE43_EXACT_BUGATTI_G06_RUNTIME=PASS'
+
+      - name: Run Candidate 4.3 generic-hypercar G06 regression with identical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate43-g06/generic-hypercar
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate43.py -- \
+            --request "$D/request.json" \
+            --asset-map "$D/asset-map.json" \
+            --output-dir "$D" 2>&1 | tee candidate43-generic-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE43_G06_ENGINEERING_PASS' candidate43-generic-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate43-generic-runtime.log
+          grep -q 'G06_DAMAGE_STATE_FIRST_OBSERVED' candidate43-generic-runtime.log
+          grep -q 'G06_DAMAGED_STATE_CONSUMED_BY_LATER_EVENT' candidate43-generic-runtime.log
+          grep -q 'G06_PERSISTENCE_EVIDENCE_WRITTEN' candidate43-generic-runtime.log
+          grep -q '"success": true' candidate43-generic-runtime.log
+          test -s "$D/g06-persistence-evidence.json"
+          echo 'CANDIDATE43_GENERIC_HYPERCAR_G06_RUNTIME=PASS'
+
+      - name: Validate G06 machine acceptance without claiming downstream gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_generic_battle_runtime_v1_candidate43_result.py \
+            --bugatti-evidence artifacts/generic-battle-runtime-v1-candidate43-g06/exact-bugatti/generic-battle-runtime-v1-evidence.json \
+            --bugatti-persistence artifacts/generic-battle-runtime-v1-candidate43-g06/exact-bugatti/g06-persistence-evidence.json \
+            --generic-evidence artifacts/generic-battle-runtime-v1-candidate43-g06/generic-hypercar/generic-battle-runtime-v1-evidence.json \
+            --generic-persistence artifacts/generic-battle-runtime-v1-candidate43-g06/generic-hypercar/g06-persistence-evidence.json \
+            | tee candidate43-g06-machine-acceptance.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE43_G06_MACHINE_ACCEPTANCE"' candidate43-g06-machine-acceptance.log
+          grep -q '"status": "PASS"' candidate43-g06-machine-acceptance.log
+          grep -q '"g04Preserved": true' candidate43-g06-machine-acceptance.log
+          grep -q '"g05Preserved": true' candidate43-g06-machine-acceptance.log
+          grep -q '"g06CausalDamagePersistentState": true' candidate43-g06-machine-acceptance.log
+          grep -q '"g07DramaClaimed": false' candidate43-g06-machine-acceptance.log
+          grep -q '"productionReadyClaimed": false' candidate43-g06-machine-acceptance.log
+          echo 'ISS_G06_MACHINE_ACCEPTANCE=PASS'
+
+      - name: Upload Candidate 4.3 G06 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate43-g06-${{ github.run_id }}
+          path: |
+            candidate43-g06-property.log
+            candidate43-bugatti-asset.log
+            candidate43-g06-fixtures.log
+            candidate43-blender-version.log
+            candidate43-preserved-asset-regression.log
+            candidate43-bugatti-runtime.log
+            candidate43-generic-runtime.log
+            candidate43-g06-machine-acceptance.log
+            artifacts/generic-battle-runtime-v1-candidate43-g06/
+            artifacts/visual-vnext-rc2-preflight/
+          if-no-files-found: warn
+          retention-days: 14
