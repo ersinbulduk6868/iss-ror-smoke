@@ -11,7 +11,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write
+  actions: read
 
 concurrency:
   group: iss-generic-battle-runtime-v1-bugatti-geometry-diagnostic
@@ -20,8 +20,7 @@ concurrency:
 env:
   BLENDER_VERSION: '4.5.13'
   EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
-  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
-  SUPABASE_ANON_JWT: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhuc3p2cWxncWF0c2didWNoZXd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDM0NjYsImV4cCI6MjEwMTY3OTQ2Nn0.anxhWIG2ufyD1DpHJUDz4LvLoRghHW4fDiN-vTj_auc'
+  SOURCE_ARTIFACT_ID: '10389794595'
 
 jobs:
   diagnostic:
@@ -29,13 +28,20 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Resolve exact Bugatti private read
+      - name: Reuse proven Candidate 3.8 exact Bugatti access receipt
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir -p artifacts/visual-vnext-rc2-preflight
-          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
-          curl --fail --silent --show-error -H "apikey: $SUPABASE_ANON_JWT" -H "Authorization: Bearer $SUPABASE_ANON_JWT" -H "x-github-oidc: $OIDC" -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          mkdir -p artifacts/visual-vnext-rc2-preflight /tmp/c38
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
+            -o /tmp/c38.zip
+          unzip -q /tmp/c38.zip -d /tmp/c38
+          cp /tmp/c38/artifacts/visual-vnext-rc2-preflight/asset-access.json artifacts/visual-vnext-rc2-preflight/asset-access.json
           python3 - <<'PY'
           import json,os
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json',encoding='utf-8'))
@@ -43,6 +49,7 @@ jobs:
           assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY'
           assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA']
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('PROVEN_CANDIDATE38_ASSET_ACCESS_REUSED=PASS')
           PY
       - name: Acquire exact Bugatti
         shell: bash
@@ -60,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update >/dev/null
-          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
       - name: Download exact Blender
         shell: bash
         run: |
