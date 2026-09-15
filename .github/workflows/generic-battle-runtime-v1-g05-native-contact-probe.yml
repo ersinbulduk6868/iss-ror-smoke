@@ -1,0 +1,85 @@
+name: ISS G05 Blender native contact API probe
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-g05-native-contact-probe.yml'
+      - 'blender/iss_g05_native_contact_probe.py'
+      - 'docs/ISS_G05_FULL_AFFECTED_LAYER_AUDIT.md'
+
+concurrency:
+  group: iss-g05-native-contact-probe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BLENDER_VERSION: '4.5.13'
+
+jobs:
+  probe:
+    name: Exact Blender 4.5.13 native rigid-body contact query probe
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact probe
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Static probe audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile blender/iss_g05_native_contact_probe.py
+          grep -q 'convex_sweep_test' blender/iss_g05_native_contact_probe.py
+          ! grep -q 'obb_overlap_2d' blender/iss_g05_native_contact_probe.py
+          ! grep -Eq 'linear_velocity\s*=|location\s*=.*contact|keyframe_insert' blender/iss_g05_native_contact_probe.py
+          echo 'G05_NATIVE_CONTACT_PROBE_STATIC=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee g05-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" g05-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run native rigid-body world sweep probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/iss_g05_native_contact_probe.py \
+            2>&1 | tee g05-native-contact-probe.log
+          grep -q '"marker": "G05_BLENDER_NATIVE_CONVEX_SWEEP_PROBE"' g05-native-contact-probe.log
+          grep -q '"status": "PASS"' g05-native-contact-probe.log
+          grep -q '"selfHitContamination": false' g05-native-contact-probe.log
+          grep -q '"obbUsed": false' g05-native-contact-probe.log
+          echo 'G05_NATIVE_CONTACT_API_PROBE=PASS'
+
+      - name: Upload G05 probe evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-g05-native-contact-probe-${{ github.run_id }}
+          path: |
+            g05-blender-version.log
+            g05-native-contact-probe.log
+          if-no-files-found: warn
+          retention-days: 14
