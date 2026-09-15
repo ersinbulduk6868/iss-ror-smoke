@@ -21,7 +21,7 @@ from blender.iss_battle_runtime_assets import BlenderBattleRuntimeError, marker
 
 CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_4_G07"
 DRAMA_MODEL = "PHYSICAL_CAUSAL_DRAMA_STATE_MACHINE_V1"
-DOMINANCE_MODEL = "UNIQUE_DIRECT_G05_DAMAGE_PRESSURE_V1"
+DOMINANCE_MODEL = "LATEST_UNIQUE_DIRECT_G05_DAMAGE_INITIATIVE_V1"
 
 _ORIGINAL_G06_RESOLVE = candidate43.g06_pairwise_resolve_pending_contacts
 _ORIGINAL_G06_OUTCOME = candidate43.g06_outcome_resolve
@@ -57,6 +57,7 @@ class CausalDramaTracker:
     direct_pressure: dict[str, float] = field(default_factory=dict)
     received_pressure: dict[str, float] = field(default_factory=dict)
     direct_hit_count: dict[str, int] = field(default_factory=dict)
+    latest_direct_damage_frame: dict[str, int] = field(default_factory=dict)
     seen_transactions: set[str] = field(default_factory=set)
     direct_transactions: list[dict[str, Any]] = field(default_factory=list)
     transitions: list[dict[str, Any]] = field(default_factory=list)
@@ -75,6 +76,7 @@ class CausalDramaTracker:
         self.direct_pressure.clear()
         self.received_pressure.clear()
         self.direct_hit_count.clear()
+        self.latest_direct_damage_frame.clear()
         self.seen_transactions.clear()
         self.direct_transactions.clear()
         self.transitions.clear()
@@ -104,28 +106,28 @@ class CausalDramaTracker:
         for actor_id, actor in sorted(actors.items()):
             inflicted = float(self.direct_pressure.get(actor_id, 0.0))
             received = float(self.received_pressure.get(actor_id, 0.0))
-            # Dominance is deliberately grounded in unique direct G05 damage
-            # transactions. Persistent actor state is reported alongside it but
-            # is not used to manufacture a scripted winner.
-            score = inflicted - received * 0.25
             rows[actor_id] = {
-                "score": score,
                 "directDamagePressureInflicted": inflicted,
                 "directDamagePressureReceived": received,
                 "directDamageHitCount": int(self.direct_hit_count.get(actor_id, 0)),
+                "latestDirectDamageFrame": self.latest_direct_damage_frame.get(actor_id),
                 "state": self._actor_state(actor),
             }
-        ranked = sorted(rows, key=lambda actor_id: (-float(rows[actor_id]["score"]), actor_id))
-        leader = ranked[0] if ranked else None
-        runner_up = ranked[1] if len(ranked) > 1 else None
-        unique = False
-        if leader is not None:
-            leader_score = float(rows[leader]["score"])
-            runner_score = float(rows[runner_up]["score"]) if runner_up is not None else float("-inf")
-            unique = leader_score > runner_score + 1.0e-12 and leader_score > 0.0
+        latest_frames = {
+            actor_id: int(row["latestDirectDamageFrame"])
+            for actor_id, row in rows.items()
+            if row["latestDirectDamageFrame"] is not None
+        }
+        leader: str | None = None
+        if latest_frames:
+            newest = max(latest_frames.values())
+            leaders = sorted(actor_id for actor_id, tx_frame in latest_frames.items() if tx_frame == newest)
+            if len(leaders) == 1:
+                leader = leaders[0]
         return {
             "frame": int(frame),
-            "leader": leader if unique else None,
+            "leader": leader,
+            "authority": DOMINANCE_MODEL,
             "rows": rows,
         }
 
@@ -268,6 +270,7 @@ class CausalDramaTracker:
         self.direct_pressure[attacker_id] = float(self.direct_pressure.get(attacker_id, 0.0)) + severity
         self.received_pressure[target_id] = float(self.received_pressure.get(target_id, 0.0)) + severity
         self.direct_hit_count[attacker_id] = int(self.direct_hit_count.get(attacker_id, 0)) + 1
+        self.latest_direct_damage_frame[attacker_id] = frame
         snapshot = self.dominance_snapshot(actors, frame)
 
         if phase in {"FIRST_ATTACK", "ESCALATION"} and self.escalation is None:
@@ -309,6 +312,7 @@ class CausalDramaTracker:
             and str(leader) != self.initial_dominant_actor
             and attacker_id == str(leader)
             and prior_damage
+            and frame > int(self.initial_dominance_frame or -1)
         ):
             self.reversal = self._transition(
                 "DOMINANCE_REVERSAL_COMEBACK_PHYSICALLY_EARNED",
@@ -598,6 +602,7 @@ def g07_outcome_resolve(states: dict[str, Any], events: dict[str, Any]) -> dict[
     outcome = dict(outcome)
     outcome["causalDrama"] = {
         "model": DRAMA_MODEL,
+        "dominanceModel": DOMINANCE_MODEL,
         "initialDominantActor": _tracker.initial_dominant_actor,
         "dominanceReversalObserved": _tracker.reversal is not None,
         "climaxObserved": _tracker.climax is not None,
