@@ -7,6 +7,7 @@ from pathlib import Path
 
 EXPECTED_RUNTIME = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_2_G05"
 EXPECTED_CONTACT_MODEL = "RECIPROCAL_NATIVE_SOLVER_RESPONSE_V1"
+EXPECTED_OUTER_MODEL = "PAIRWISE_CONTACT_OUTER_AUTHORITY_V1"
 EXPECTED_BUGATTI_SHA = "8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4"
 EXPECTED_GENERIC_SHA = "0b2710a840d128aee53161277edb8cb77e1930d339f53585c6faece3f1dc2b1c"
 
@@ -27,6 +28,17 @@ def _validate_receipt(receipt: dict, *, label: str, event_id: str) -> None:
         raise ValidationError(f"{label}:PAIRWISE_RECEIPT_NOT_VERIFIED:{event_id}")
     if receipt.get("model") != EXPECTED_CONTACT_MODEL:
         raise ValidationError(f"{label}:PAIRWISE_MODEL_MISMATCH:{event_id}:{receipt.get('model')}")
+    if receipt.get("outerAuthorityModel") != EXPECTED_OUTER_MODEL:
+        raise ValidationError(f"{label}:OUTER_MODEL_MISMATCH:{event_id}:{receipt.get('outerAuthorityModel')}")
+    outer = receipt.get("outerAuthorityReceipt") or {}
+    if outer.get("qualified") is not True or outer.get("reason") != "QUALIFIED":
+        raise ValidationError(f"{label}:OUTER_AUTHORITY_NOT_QUALIFIED:{event_id}:{outer.get('reason')}")
+    for field in ("target_identity_pass", "controller_handoff_pass", "locality_pass", "semantic_pass"):
+        if outer.get(field) is not True:
+            raise ValidationError(f"{label}:OUTER_AUTHORITY_FIELD_FAIL:{event_id}:{field}")
+
+    if receipt.get("targetIdentityPass") is not True:
+        raise ValidationError(f"{label}:TARGET_IDENTITY_FAIL:{event_id}")
     if receipt.get("controllerCutoffObserved") is not True or receipt.get("motorAuthorityZero") is not True:
         raise ValidationError(f"{label}:CONTROLLER_HANDOFF_FAIL:{event_id}")
     if receipt.get("localityPass") is not True:
@@ -175,6 +187,7 @@ def main() -> None:
         "status": "PASS",
         "runtime": EXPECTED_RUNTIME,
         "contactAuthorityModel": EXPECTED_CONTACT_MODEL,
+        "outerAuthorityModel": EXPECTED_OUTER_MODEL,
         "exactBugatti": bugatti,
         "genericHypercar": generic,
         "g04Preserved": True,
