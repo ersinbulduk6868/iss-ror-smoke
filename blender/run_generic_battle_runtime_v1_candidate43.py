@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sys
-from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +30,7 @@ _control_samples_ref: list[dict[str, Any]] | None = None
 _g05_bound_impacts: list[dict[str, Any]] = []
 _damage_first_seen: dict[str, dict[str, Any]] = {}
 _later_damaged_event_rows: list[dict[str, Any]] = []
+_g05_damage_provenance_bound_count = 0
 
 
 def _json_copy(value: Any) -> Any:
@@ -108,6 +108,41 @@ def _actor_snapshot(actor: Any, frame: int) -> dict[str, Any]:
     }
 
 
+def _bind_damage_event_provenance(
+    row: dict[str, Any],
+    actors: dict[str, Any],
+) -> int:
+    receipt = row.get("nativeContactReceipt")
+    if not isinstance(receipt, dict) or receipt.get("status") != "VERIFIED":
+        return 0
+    bound = 0
+    for evidence_field in ("evidence", "attackerEvidence"):
+        evidence = row.get(evidence_field)
+        if not isinstance(evidence, dict):
+            continue
+        frame = int(evidence.get("frame") or -1)
+        attacker_id = str(evidence.get("attacker_id") or "")
+        target_id = str(evidence.get("target_id") or "")
+        if not attacker_id or not target_id:
+            continue
+        actor = actors.get(target_id)
+        if actor is None:
+            continue
+        for damage in actor.state.damage_events:
+            if (
+                int(damage.get("frame") or -2) == frame
+                and str(damage.get("attackerId") or "") == attacker_id
+                and str(damage.get("targetId") or "") == target_id
+            ):
+                damage["g05NativeContactAuthority"] = True
+                damage["g05ContactAuthorityModel"] = candidate42.CONTACT_AUTHORITY
+                damage["g05PhysicalEventId"] = str(row.get("eventId") or "")
+                damage["g05ReceiptStatus"] = "VERIFIED"
+                damage["g05ReceiptContactFrame"] = int(receipt.get("contactFrame") or frame)
+                bound += 1
+    return bound
+
+
 def g06_pairwise_resolve_pending_contacts(
     frame: int,
     actors: dict[str, Any],
@@ -117,6 +152,7 @@ def g06_pairwise_resolve_pending_contacts(
     camera: Any,
     impact_log: list[dict[str, Any]],
 ) -> None:
+    global _g05_damage_provenance_bound_count
     before = len(impact_log)
     _ORIGINAL_C42_RESOLVE(
         frame,
@@ -137,10 +173,14 @@ def g06_pairwise_resolve_pending_contacts(
             raise BlenderBattleRuntimeError(
                 f"G06_G05_RECEIPT_INVALID:{row.get('eventId')}"
             )
+        bound = _bind_damage_event_provenance(row, actors)
+        _g05_damage_provenance_bound_count += bound
         _g05_bound_impacts.append({
             "eventId": str(row.get("eventId") or ""),
             "damageEarned": bool(row.get("damageEarned")),
+            "boundDamageEventCount": int(bound),
             "evidence": _json_copy(row.get("evidence") or {}),
+            "attackerEvidence": _json_copy(row.get("attackerEvidence")) if row.get("attackerEvidence") else None,
             "nativeContactReceipt": _json_copy(receipt),
             "physicalTransactionEventId": row.get("physicalTransactionEventId"),
             "inherited": bool(row.get("nativeContactInheritedFromPhysicalTransaction")),
@@ -223,6 +263,16 @@ def g06_set_controls(
             actor_id=entity,
         )
         snapshot = _actor_snapshot(actor, frame)
+        efficiency = float(actor.state.drive_efficiency)
+        capability = {
+            "profileMaxSpeedMps": float(actor.profile.max_speed_mps),
+            "profileMaxReverseMps": float(actor.profile.max_reverse_mps),
+            "profileMaxYawRateRadS": float(actor.profile.max_yaw_rate_rad_s),
+            "driveEfficiency": efficiency,
+            "effectiveMaxSpeedMps": float(actor.profile.max_speed_mps) * max(0.0, efficiency),
+            "effectiveMaxReverseMps": float(actor.profile.max_reverse_mps) * max(0.0, efficiency),
+            "effectiveMaxYawRateRadS": float(actor.profile.max_yaw_rate_rad_s) * max(0.15, efficiency),
+        }
         row = {
             "frame": int(frame),
             "actorId": entity,
@@ -230,6 +280,7 @@ def g06_set_controls(
             "eventStartFrame": int(event.start_frame),
             "priorImpactFrame": int(last_impact),
             "state": snapshot["state"],
+            "effectiveCapability": capability,
             "controlSample": sample,
         }
         _later_damaged_event_rows.append(row)
@@ -240,7 +291,8 @@ def g06_set_controls(
             eventId=event.event_id,
             priorImpactFrame=int(last_impact),
             structuralIntegrity=round(float(actor.state.structural_integrity), 6),
-            driveEfficiency=round(float(actor.state.drive_efficiency), 6),
+            driveEfficiency=round(efficiency, 6),
+            effectiveMaxSpeedMps=round(capability["effectiveMaxSpeedMps"], 6),
             disabled=bool(actor.state.disabled),
             controlSamplePresent=sample is not None,
             model=PERSISTENCE_MODEL,
@@ -265,6 +317,7 @@ def _write_persistence_evidence(states: dict[str, Any], events: dict[str, Any]) 
         "finalFrame": frame,
         "programTotalFrames": int(_program_ref.total_frames),
         "g05BoundImpacts": _json_copy(_g05_bound_impacts),
+        "g05DamageProvenanceBoundCount": int(_g05_damage_provenance_bound_count),
         "firstDamageState": _json_copy(_damage_first_seen),
         "laterDamagedEventObservations": _json_copy(_later_damaged_event_rows),
         "finalActors": final_actors,
@@ -291,6 +344,7 @@ def _write_persistence_evidence(states: dict[str, Any], events: dict[str, Any]) 
         path=str(path),
         finalFrame=frame,
         g05BoundImpactCount=len(_g05_bound_impacts),
+        g05DamageProvenanceBoundCount=int(_g05_damage_provenance_bound_count),
         damagedActorCount=len(_damage_first_seen),
         laterDamagedEventObservationCount=len(_later_damaged_event_rows),
         model=PERSISTENCE_MODEL,
@@ -303,16 +357,17 @@ def g06_outcome_resolve(states: dict[str, Any], events: dict[str, Any]) -> dict[
 
 
 def _reset() -> None:
+    global _g05_damage_provenance_bound_count
     _actor_refs.clear()
     _g05_bound_impacts.clear()
     _damage_first_seen.clear()
     _later_damaged_event_rows.clear()
+    _g05_damage_provenance_bound_count = 0
 
 
 def main() -> None:
     _reset()
     candidate42.CANDIDATE = CANDIDATE
-    candidate42._ORIGINAL_HARDENED_RESOLVE = candidate42._ORIGINAL_HARDENED_RESOLVE
     candidate42.pairwise_resolve_pending_contacts = g06_pairwise_resolve_pending_contacts
     candidate40.autonomous_set_controls = g06_set_controls
     runtime.OutcomeResolver.resolve = staticmethod(g06_outcome_resolve)
