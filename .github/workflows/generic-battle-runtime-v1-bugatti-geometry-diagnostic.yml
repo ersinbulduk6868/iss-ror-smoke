@@ -1,0 +1,84 @@
+name: ISS Generic Battle Runtime v1 exact Bugatti geometry diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-bugatti-geometry-diagnostic.yml'
+      - 'blender/diagnose_generic_bugatti_presentation_filter.py'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-bugatti-geometry-diagnostic
+  cancel-in-progress: false
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imhuc3p2cWxncWF0c2didWNoZXd0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYxMDM0NjYsImV4cCI6MjEwMTY3OTQ2Nn0.anxhWIG2ufyD1DpHJUDz4LvLoRghHW4fDiN-vTj_auc'
+
+jobs:
+  diagnostic:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Resolve exact Bugatti private read
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error -H "apikey: $SUPABASE_ANON_JWT" -H "Authorization: Bearer $SUPABASE_ANON_JWT" -H "x-github-oidc: $OIDC" -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json',encoding='utf-8'))
+          a=d['asset']
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY'
+          assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA']
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f: f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          PY
+      - name: Acquire exact Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py >/tmp/asset.log 2>&1
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' /tmp/asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json',encoding='utf-8'))
+          print('BUGATTI_PRIMARY='+d['assets']['bugattiA']['primaryScene'])
+          PY
+      - name: Install Blender dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+      - name: Download exact Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          echo "BLENDER_BIN=$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender" >> "$GITHUB_ENV"
+      - name: Run presentation geometry diagnostic
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/diagnose_generic_bugatti_presentation_filter.py -- --bugatti "$BUGATTI_PRIMARY" 2>&1 | tee bugatti-geometry-diagnostic.log
+          grep -q 'BUGATTI_PRESENTATION_FILTER_DIAGNOSTIC' bugatti-geometry-diagnostic.log
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-bugatti-geometry-diagnostic-${{ github.run_id }}
+          path: bugatti-geometry-diagnostic.log
+          retention-days: 7
