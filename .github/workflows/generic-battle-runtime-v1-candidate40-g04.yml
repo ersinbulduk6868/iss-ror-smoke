@@ -1,0 +1,211 @@
+name: ISS Generic Battle Runtime v1 Candidate 4.0 G04 autonomous acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate40-g04.yml'
+      - 'docs/ISS_G04_FULL_AFFECTED_LAYER_AUDIT.md'
+      - 'blender/iss_battle_runtime_autonomy.py'
+      - 'blender/run_generic_battle_runtime_v1_candidate40.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate40.py'
+      - 'tools/build_generic_battle_runtime_v1_candidate40_g04.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate40_result.py'
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-candidate40-g04
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  SOURCE_ARTIFACT_ID: '10389794595'
+
+jobs:
+  g04:
+    name: Candidate 4.0 G04 closed-loop autonomy
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - name: Checkout exact Candidate 4.0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Full G04 zero-cost property and static acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_autonomy.py \
+            blender/run_generic_battle_runtime_v1_candidate40.py \
+            tools/validate_generic_battle_runtime_v1_candidate40.py \
+            tools/build_generic_battle_runtime_v1_candidate40_g04.py \
+            tools/validate_generic_battle_runtime_v1_candidate40_result.py
+          python3 tools/validate_generic_battle_runtime_v1_candidate40.py | tee candidate40-g04-property.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE40_G04_PROPERTY_ACCEPTANCE"' candidate40-g04-property.log
+          grep -q '"status": "PASS"' candidate40-g04-property.log
+          echo 'CANDIDATE40_G04_ZERO_COST_ACCEPTANCE=PASS'
+
+      - name: Reuse proven exact Bugatti access receipt
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/visual-vnext-rc2-preflight /tmp/c40-source
+          curl --fail --location --silent --show-error \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
+            -o /tmp/c40-source.zip
+          unzip -q /tmp/c40-source.zip -d /tmp/c40-source
+          cp /tmp/c40-source/artifacts/visual-vnext-rc2-preflight/asset-access.json artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json',encoding='utf-8'))
+          a=d['asset']
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY'
+          assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA']
+          assert int(a['expectedBytes'])==31576440 and int(a['pairCount'])==2
+          assert str(a['signedUrl']).startswith('https://')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('PROVEN_BUGATTI_ACCESS_RECEIPT=PASS')
+          PY
+
+      - name: Acquire and validate exact full-source Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee candidate40-bugatti-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' candidate40-bugatti-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json',encoding='utf-8'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert d['status']=='PASS' and d['visualProxyForbidden'] is True and d['quant120Forbidden'] is True
+          assert a['identity']['binaryExact'] is True and b['identity']['binaryExact'] is True
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          assert a['sourceIdentity']['uid']==b['sourceIdentity']['uid']=='4af92c51ecdd4efa9b1c19a1163d9f46'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+
+      - name: Build G04 exact Bugatti and generic fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate40_g04.py --bugatti-primary "$BUGATTI_PRIMARY" | tee candidate40-g04-fixtures.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE40_G04_FIXTURES_PASS"' candidate40-g04-fixtures.log
+          grep -q '"exactCollisionFrameTarget": false' candidate40-g04-fixtures.log
+          grep -q '"exactImpactEnergyTarget": false' candidate40-g04-fixtures.log
+          echo 'CANDIDATE40_G04_FIXTURES=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee candidate40-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" candidate40-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Preserve Candidate 3.9 asset and semantic regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/verify_generic_battle_runtime_v1_candidate39_assets.py -- \
+            --bugatti "$BUGATTI_PRIMARY" 2>&1 | tee candidate40-preserved-asset-regression.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE39_ASSET_REGRESSION"' candidate40-preserved-asset-regression.log
+          grep -q '"status": "PASS"' candidate40-preserved-asset-regression.log
+          grep -q 'SUPPORTED_PHYSICAL_ENVELOPE_PASS' candidate40-preserved-asset-regression.log
+          grep -q 'SEMANTIC_SURFACE_ZONE_PROJECTED' candidate40-preserved-asset-regression.log
+          echo 'CANDIDATE39_PRESERVED_ASSET_SEMANTIC_REGRESSION=PASS'
+
+      - name: Run Candidate 4.0 exact Bugatti closed-loop motion acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate40-g04/exact-bugatti
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate40.py -- \
+            --request "$D/request.json" \
+            --asset-map "$D/asset-map.json" \
+            --output-dir "$D" 2>&1 | tee candidate40-bugatti-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE40_G04_ENGINEERING_PASS' candidate40-bugatti-runtime.log
+          grep -q 'INTENT_ONLY_EXECUTION_CONTRACT_PASS' candidate40-bugatti-runtime.log
+          grep -q 'AUTONOMY_MODE_CHANGED' candidate40-bugatti-runtime.log
+          grep -q 'CONTACT_HANDOFF' candidate40-bugatti-runtime.log
+          grep -q 'QUALIFIED_NATIVE_RESPONSE_IMPACT' candidate40-bugatti-runtime.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_RESULT"' candidate40-bugatti-runtime.log
+          grep -q '"success": true' candidate40-bugatti-runtime.log
+          echo 'CANDIDATE40_EXACT_BUGATTI_G04_RUNTIME=PASS'
+
+      - name: Run Candidate 4.0 generic-hypercar regression with identical autonomy source
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate40-g04/generic-hypercar
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate40.py -- \
+            --request "$D/request.json" \
+            --asset-map "$D/asset-map.json" \
+            --output-dir "$D" 2>&1 | tee candidate40-generic-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE40_G04_ENGINEERING_PASS' candidate40-generic-runtime.log
+          grep -q 'INTENT_ONLY_EXECUTION_CONTRACT_PASS' candidate40-generic-runtime.log
+          grep -q 'AUTONOMY_MODE_CHANGED' candidate40-generic-runtime.log
+          grep -q 'CONTACT_HANDOFF' candidate40-generic-runtime.log
+          grep -q 'QUALIFIED_NATIVE_RESPONSE_IMPACT' candidate40-generic-runtime.log
+          grep -q '"success": true' candidate40-generic-runtime.log
+          echo 'CANDIDATE40_GENERIC_HYPERCAR_G04_RUNTIME=PASS'
+
+      - name: Validate G04 machine acceptance without claiming downstream gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_generic_battle_runtime_v1_candidate40_result.py \
+            --bugatti-evidence artifacts/generic-battle-runtime-v1-candidate40-g04/exact-bugatti/generic-battle-runtime-v1-evidence.json \
+            --generic-evidence artifacts/generic-battle-runtime-v1-candidate40-g04/generic-hypercar/generic-battle-runtime-v1-evidence.json \
+            | tee candidate40-g04-machine-acceptance.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE40_G04_MACHINE_ACCEPTANCE"' candidate40-g04-machine-acceptance.log
+          grep -q '"status": "PASS"' candidate40-g04-machine-acceptance.log
+          grep -q '"g05NativeContactTruthClaimed": false' candidate40-g04-machine-acceptance.log
+          grep -q '"g06DamageClaimed": false' candidate40-g04-machine-acceptance.log
+          grep -q '"productionReadyClaimed": false' candidate40-g04-machine-acceptance.log
+          echo 'ISS_G04_MACHINE_ACCEPTANCE=PASS'
+
+      - name: Upload Candidate 4.0 G04 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate40-g04-${{ github.run_id }}
+          path: |
+            candidate40-g04-property.log
+            candidate40-bugatti-asset.log
+            candidate40-g04-fixtures.log
+            candidate40-blender-version.log
+            candidate40-preserved-asset-regression.log
+            candidate40-bugatti-runtime.log
+            candidate40-generic-runtime.log
+            candidate40-g04-machine-acceptance.log
+            artifacts/generic-battle-runtime-v1-candidate40-g04/
+            artifacts/visual-vnext-rc2-preflight/
+          if-no-files-found: warn
+          retention-days: 14
