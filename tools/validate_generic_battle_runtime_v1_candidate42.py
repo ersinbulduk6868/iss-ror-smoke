@@ -87,26 +87,45 @@ def main() -> None:
         "nativeContactAuthority",
         "pairwiseLocalityGapM",
         "semanticDistance",
-        "obbFinalContactAuthority\": False",
-        "actorPoseOrVelocityMutation\": False",
+        "\"obbFinalContactAuthority\": False",
+        "\"nativeSweepFinalContactAuthority\": False",
+        "\"actorPoseOrVelocityMutation\": False",
     ]
     missing = [token for token in required if token not in source]
     if missing:
         raise SystemExit("G05_C42_REQUIRED_SOURCE_CONTRACT_MISSING:" + ",".join(missing))
 
     low = source.lower()
-    forbidden = [
+    forbidden_runtime_mechanisms = [
         "obb_overlap_2d(",
         "convex_sweep_test(",
-        "targetenergyj",
-        "targetimpactspeedmps",
-        "collisionframe",
+        ".linear_velocity =",
         "keyframe_insert(data_path=\"location\"",
-        "linear_velocity =",
+        "keyframe_insert(data_path='location'",
+        "keyframe_insert(data_path=\"rotation",
+        "keyframe_insert(data_path='rotation",
     ]
-    hits = [token for token in forbidden if token in low]
-    if hits:
-        raise SystemExit("G05_C42_FORBIDDEN_CONTACT_OR_CHEAT_SOURCE:" + ",".join(hits))
+    mechanism_hits = [token for token in forbidden_runtime_mechanisms if token in low]
+    if mechanism_hits:
+        raise SystemExit("G05_C42_FORBIDDEN_CONTACT_OR_CHEAT_SOURCE:" + ",".join(mechanism_hits))
+
+    forbidden_executable_inputs = [
+        'event.get("targetenergyj")',
+        "event.get('targetenergyj')",
+        'event.get("targetimpactspeedmps")',
+        "event.get('targetimpactspeedmps')",
+        'event.get("collisionframe")',
+        "event.get('collisionframe')",
+        '["targetenergyj"]',
+        "['targetenergyj']",
+        '["targetimpactspeedmps"]',
+        "['targetimpactspeedmps']",
+        '["collisionframe"]',
+        "['collisionframe']",
+    ]
+    executable_hits = [token for token in forbidden_executable_inputs if token in low]
+    if executable_hits:
+        raise SystemExit("G05_C42_FORBIDDEN_EXECUTABLE_CHOREOGRAPHY:" + ",".join(executable_hits))
 
     print(json.dumps({
         "marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE42_G05_PROPERTY_ACCEPTANCE",
