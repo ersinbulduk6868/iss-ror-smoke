@@ -41,6 +41,7 @@ def main() -> None:
     a = args()
     path = Path(a.bugatti).resolve()
     imported = assets.import_asset(path)
+    imported_names = [obj.name for obj in imported]
     meshes = assets.mesh_objects(imported)
     before = bounds_payload(meshes)
 
@@ -48,11 +49,12 @@ def main() -> None:
         obj for obj in meshes
         if assets.token_match(assets.object_tokens(obj), assets.PRESENTATION_TERMS)
     ]
+    presentation_names = {obj.name for obj in presentation}
     child_world_before = {
         child.name: child.matrix_world.copy()
         for obj in presentation
         for child in obj.children_recursive
-        if child in imported
+        if child.name in imported_names
     }
     removed = []
     for obj in presentation:
@@ -62,7 +64,7 @@ def main() -> None:
             "materials": [slot.material.name for slot in obj.material_slots if slot.material],
             "parent": obj.parent.name if obj.parent else None,
             "children": [child.name for child in obj.children],
-            "recursiveChildCount": len([c for c in obj.children_recursive if c in imported]),
+            "recursiveChildCount": len([c for c in obj.children_recursive if c.name in imported_names]),
             "bounds": {
                 "lo": [round(float(x), 6) for x in lo],
                 "hi": [round(float(x), 6) for x in hi],
@@ -71,8 +73,15 @@ def main() -> None:
 
     for obj in presentation:
         bpy.data.objects.remove(obj, do_unlink=True)
-    imported_after = [obj for obj in imported if obj.name in bpy.data.objects]
     bpy.context.view_layer.update()
+
+    imported_after = []
+    for name in imported_names:
+        if name in presentation_names:
+            continue
+        obj = bpy.data.objects.get(name)
+        if obj is not None:
+            imported_after.append(obj)
     after = bounds_payload(assets.mesh_objects(imported_after))
 
     child_deltas = []
