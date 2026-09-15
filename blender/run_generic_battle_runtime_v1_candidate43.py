@@ -115,6 +115,10 @@ def _bind_damage_event_provenance(
     receipt = row.get("nativeContactReceipt")
     if not isinstance(receipt, dict) or receipt.get("status") != "VERIFIED":
         return 0
+    if receipt.get("model") != candidate42.CONTACT_AUTHORITY:
+        raise BlenderBattleRuntimeError(
+            f"G06_G05_RECEIPT_MODEL_INVALID:{row.get('eventId')}:{receipt.get('model')}"
+        )
     bound = 0
     for evidence_field in ("evidence", "attackerEvidence"):
         evidence = row.get(evidence_field)
@@ -134,6 +138,14 @@ def _bind_damage_event_provenance(
                 and str(damage.get("attackerId") or "") == attacker_id
                 and str(damage.get("targetId") or "") == target_id
             ):
+                # Candidate 4.2 canonicalizes direct damage detector metadata to
+                # G05 authority, but a mirrored damage event can retain the
+                # underlying ImpactModel detector when there is no reciprocal
+                # alias row. Bind both direct and mirrored actor-state records
+                # only after the verified G05 receipt has been matched by
+                # frame + attacker + target. This is provenance hardening only;
+                # it does not change contact, damage, motion, or thresholds.
+                damage["detector"] = candidate42.CONTACT_AUTHORITY
                 damage["g05NativeContactAuthority"] = True
                 damage["g05ContactAuthorityModel"] = candidate42.CONTACT_AUTHORITY
                 damage["g05PhysicalEventId"] = str(row.get("eventId") or "")
