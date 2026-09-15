@@ -58,9 +58,9 @@ def main() -> None:
     required_builder = (
         '"evt-escalation-alpha"',
         '"evt-escalation-beta"',
-        '"phase": "COUNTERATTACK"',
-        '"phase": "CLIMAX"',
-        '"damage": {"required": False, "persistent": True, "zone": "front"}',
+        'counter["damage"] = {"required": False',
+        'climax["damage"] = {"required": False',
+        'counter["causedByEventIds"] = ["evt-escalation-alpha", "evt-escalation-beta"]',
         '"minQualifiedContacts": 1',
         'sameIntentStructureAcrossAssets": True',
         'counterattackRepeatedDamageRequired": False',
@@ -68,6 +68,8 @@ def main() -> None:
         '"forcedWinner": False',
         '"exactCollisionFrameTarget": False',
         '"exactImpactEnergyTarget": False',
+        'verify_request(exact)',
+        'verify_request(generic)',
     )
     missing_builder = [x for x in required_builder if x not in builder]
     if missing_builder:
