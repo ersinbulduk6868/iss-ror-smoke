@@ -12,6 +12,7 @@ MANIFEST = ASSET_DIR / "manifest.json"
 OUT = ROOT / "artifacts" / "generic-battle-runtime-v1-preflight"
 EXPECTED_ENGINE = "BLENDER"
 EXPECTED_ENGINE_VERSION = "4.5.13"
+SOURCE_FORWARD_AXIS = "-Y"
 
 
 def sha256_file(path: Path) -> str:
@@ -50,7 +51,7 @@ def main() -> None:
         "totalMassKg": float(manifest.get("massKg") or 1450.0),
         "semanticBodies": ["front", "rear", "body", "chassis"],
         "runtimeProfile": {
-            "forwardAxis": "X",
+            "forwardAxis": SOURCE_FORWARD_AXIS,
             "maxSpeedMps": 18.0,
             "maxReverseMps": 5.0,
             "accelerationMps2": 7.0,
@@ -202,6 +203,7 @@ def main() -> None:
             {
                 "marker": "GENERIC_BATTLE_RUNTIME_PREFLIGHT_FIXTURE_PASS",
                 "assetSha256": actual_sha,
+                "sourceForwardAxis": SOURCE_FORWARD_AXIS,
                 "actorCount": 2,
                 "eventCount": 3,
                 "request": str((OUT / "request.json").resolve()),
