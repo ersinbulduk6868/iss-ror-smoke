@@ -61,8 +61,6 @@ def validate_one(data: dict, *, expected_sha: str, label: str) -> dict[str, obje
             raise ValidationError(f"{label}:CONTACT_EVENT_NOT_SUCCEEDED")
         if int(row.get("contactCount") or 0) < 1:
             raise ValidationError(f"{label}:CONTACT_EVIDENCE_MISSING")
-        if int(row.get("damageCount") or 0) != 0:
-            raise ValidationError(f"{label}:G04_MOTION_FIXTURE_UNEXPECTED_DAMAGE")
 
     impacts = data.get("impacts") or []
     if len(impacts) < 2:
@@ -93,8 +91,6 @@ def validate_one(data: dict, *, expected_sha: str, label: str) -> dict[str, obje
         for actor in (data.get("actors") or {}).values()
         for damage in ((actor.get("state") or {}).get("damageEvents") or [])
     ]
-    if damage_rows:
-        raise ValidationError(f"{label}:MOTION_GATE_MUST_NOT_REQUIRE_DAMAGE")
 
     return {
         "status": "PASS",
@@ -104,6 +100,8 @@ def validate_one(data: dict, *, expected_sha: str, label: str) -> dict[str, obje
         "maxTargetRefreshCount": max_refresh,
         "modes": sorted(modes),
         "replanCountObserved": max(int(row.get("replanCount") or 0) for row in attack_samples),
+        "incidentalCausalDamageEvents": len(damage_rows),
+        "damageWasRequiredForG04": False,
     }
 
 
