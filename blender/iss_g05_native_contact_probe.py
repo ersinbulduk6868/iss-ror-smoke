@@ -11,6 +11,7 @@ def reset() -> None:
     scene = bpy.context.scene
     scene.frame_start = 1
     scene.frame_end = 10
+    scene.gravity = (0.0, 0.0, 0.0)
 
 
 def cube(name: str, location: tuple[float, float, float], scale: tuple[float, float, float]):
@@ -33,6 +34,32 @@ def add_rigid(obj, *, passive: bool) -> None:
     obj.select_set(False)
 
 
+def initialize_rigidbody_world(scene: bpy.types.Scene) -> dict[str, int]:
+    """Initialize Blender's native rigid-body simulation without mutating test poses."""
+    if scene.rigidbody_world is None:
+        raise RuntimeError("G05_RIGIDBODY_WORLD_MISSING")
+    world = scene.rigidbody_world
+    world.substeps_per_frame = 10
+    world.solver_iterations = 20
+    world.point_cache.frame_start = scene.frame_start
+    world.point_cache.frame_end = scene.frame_end
+
+    # Blender 4.5 only materializes the Bullet world after the dependency graph has
+    # evaluated at least one simulation step.  Zero gravity keeps the controlled
+    # probe bodies at their authored poses while the world is initialized.
+    scene.frame_set(scene.frame_start)
+    bpy.context.view_layer.update()
+    scene.frame_set(scene.frame_start + 1)
+    bpy.context.view_layer.update()
+
+    return {
+        "initialFrame": int(scene.frame_start),
+        "steppedFrame": int(scene.frame_start + 1),
+        "substepsPerFrame": int(world.substeps_per_frame),
+        "solverIterations": int(world.solver_iterations),
+    }
+
+
 def row(result) -> dict[str, object]:
     object_location, hitpoint, normal, has_hit = result
     return {
@@ -50,12 +77,9 @@ def main() -> None:
     add_rigid(mover, passive=False)
     add_rigid(target, passive=True)
     scene = bpy.context.scene
-    if scene.rigidbody_world is None:
-        raise RuntimeError("G05_RIGIDBODY_WORLD_MISSING")
+    init = initialize_rigidbody_world(scene)
     world = scene.rigidbody_world
-    world.substeps_per_frame = 10
-    world.solver_iterations = 20
-    bpy.context.view_layer.update()
+    assert world is not None
 
     if not hasattr(world, "convex_sweep_test"):
         raise RuntimeError("G05_CONVEX_SWEEP_API_MISSING")
@@ -100,6 +124,7 @@ def main() -> None:
                 "status": "PASS",
                 "blenderVersion": bpy.app.version_string,
                 "api": "RigidBodyWorld.convex_sweep_test",
+                "initialization": init,
                 "positive": positive,
                 "nearMiss": near_miss,
                 "emptyPath": empty_path,
@@ -107,6 +132,7 @@ def main() -> None:
                 "obbUsed": False,
                 "poseVelocityMutation": False,
                 "runtimeIntegrationClaimed": False,
+                "finalNativeContactTruthClaimed": False,
             },
             sort_keys=True,
         ),
