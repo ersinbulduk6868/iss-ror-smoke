@@ -19,7 +19,8 @@ The successor must preserve all of the following without source modification or 
 - `MIN_DAMAGE_SEVERITY = 0.055`;
 - no actor pose injection, velocity injection, teleport, reset, forced winner, forced joint release, trajectory choreography or exact collision/impact targets;
 - exact source asset identity and the same generic-runtime asset/semantic path;
-- viewer-visible causal product truth and continuous-world requirements.
+- viewer-visible causal product truth and continuous-world requirements;
+- ISS-R041 generic multi-vehicle scope: one Battle Runtime source across supported vehicle sets; asset/profile + Story intent may vary, battle source code may not.
 
 ## Machine-evidence baseline
 
@@ -44,28 +45,13 @@ This is the exact boundary from which G07 must advance.
 
 ### BattleLifecycle
 
-Current `BattleLifecycle` proves physical and causal resolution at the event level:
-
-- qualified contact count;
-- distinct qualified attackers;
-- damage earned;
-- dependency readiness;
-- event requirements met.
-
-It does **not** model dramatic battle state, actor dominance, comeback/reversal, state-driven counterattack eligibility, climax readiness or payoff readiness.
+Current `BattleLifecycle` proves physical and causal resolution at the event level through qualified contacts, distinct qualified attackers, damage earned, dependency readiness and event requirements. It does not model dramatic battle state, comeback/reversal, state-driven counterattack eligibility, climax readiness or payoff readiness.
 
 ### G04 goal selection / autonomy
 
-Candidate 4.0 chooses an active goal using:
+Candidate 4.0 chooses an active goal using event timing, dependency readiness, phase priority and terminal state. The controller itself is closed-loop and consumes realized geometry/velocity/damage capability. This is correct and must remain unchanged.
 
-- event `start_frame`;
-- dependency readiness;
-- a static phase priority;
-- terminal event state.
-
-The controller itself is closed-loop and consumes realized geometry/velocity/damage capability. This is correct and must remain unchanged.
-
-**Gap:** goal *eligibility* is still primarily planned-time/dependency driven. A `COUNTERATTACK` label does not by itself prove that the actor is physically responding to damage received from the target.
+**Gap:** a `COUNTERATTACK` label or planned time is not evidence that the actor is physically responding to prior damage.
 
 ### G05 contact authority
 
@@ -75,7 +61,7 @@ Candidate 4.2 supplies the accepted native pairwise physical transaction authori
 
 ### G06 persistence
 
-Candidate 4.3 binds verified G05 receipts to persistent actor damage state and proves that a later controller invocation consumes degraded capability.
+Candidate 4.3 binds verified G05 receipts to persistent actor damage state and proves a later controller invocation consumes degraded capability.
 
 **Gap:** this state is observable but there is no battle-level state machine that turns it into causal dramatic transitions.
 
@@ -93,21 +79,22 @@ This is a capability gap, not a G04/G05/G06 defect.
 
 ## Failure family / adjacent risks
 
-The full affected failure family includes:
+The affected failure family includes:
 
 - phase labels being mistaken for realized drama;
-- counterattack starting only because its planned time arrived;
-- comeback/reversal being declared without a physical change in battle initiative/dominance;
+- counterattack starting only because planned time arrived;
+- comeback/reversal being declared without a physical change in initiative;
+- requiring artificial repeated hits merely to manufacture a numeric dominance score;
 - climax starting before reversal is physically earned;
 - payoff settling without a resolved climax;
-- outcome being forced to match Story prose rather than resolved from final physical state;
-- duplicate/coalesced G05 receipts inflating dominance evidence;
+- outcome being forced to match Story prose rather than final physical state;
+- duplicate/coalesced G05 receipts inflating initiative evidence;
 - mirrored damage being counted as a second independent physical transaction;
 - state-machine gates accidentally modifying physics thresholds or controller commands;
-- camera dominance selecting an event that the causal state machine has not admitted;
-- G07 fixture-specific actor IDs, exact frames, exact energy or exact trajectories leaking into runtime code;
+- camera selecting an event that the causal state machine has not admitted;
+- fixture-specific actor IDs, exact frames, exact energy or exact trajectories leaking into runtime source;
 - regression of G04 autonomy, G05 contact authority or G06 persistent damage/debris;
-- private-asset OIDC workflow scope omission for a new G07 acceptance workflow.
+- private-asset OIDC workflow scope omission for the G07 acceptance workflow.
 
 ## Accepted engineering design
 
@@ -115,36 +102,49 @@ Create **Candidate 4.4 G07** as an additive successor wrapper around Candidate 4
 
 ### Causal battle-state authority
 
-Introduce a generic `PHYSICAL_CAUSAL_DRAMA_STATE_MACHINE_V1` that only consumes existing machine-authoritative runtime state:
+Introduce `PHYSICAL_CAUSAL_DRAMA_STATE_MACHINE_V1`, consuming only:
 
 - G05 VERIFIED direct physical transactions;
-- damage actually earned through the unchanged G06 path;
-- actor persistent structural/drive state;
+- damage actually earned through unchanged G06 consequence logic;
+- persistent actor structural/drive state;
 - event causal/dependency state;
 - Story/Battle phase/tactic intent as intent, never as proof.
 
-It must never write actor pose, velocity, damage magnitude, contact truth or thresholds.
+It must never write actor pose, velocity, contact truth, damage magnitude or thresholds.
 
 ### State-driven eligibility
 
 - `HOOK` / initial escalation may open from normal dependency readiness.
-- `COUNTERATTACK` becomes eligible only when its attacker has already received G05/G06-backed damage from the intended target.
-- a climax becomes eligible only after a real dominance reversal/comeback has been observed.
+- `COUNTERATTACK` becomes eligible only when its attacker already carries G05/G06-backed damage from the intended target.
+- climax becomes eligible only after a real physical initiative reversal/comeback.
 - payoff becomes eligible only after the climax is causally resolved.
 
-Planned start/end windows remain Story guidance and minimum scheduling hints; they are not substitutes for physical guards.
+Planned start/end windows remain Story guidance, not physical proof or exact execution deadlines.
 
-### Dominance / comeback evidence
+### Dominance / comeback authority — final reconciled contract
 
-Dominance is not a scripted winner flag. It is derived from **unique direct G05 physical transactions that earned damage**. Mirrored damage and inherited reciprocal aliases do not create independent dominance pressure.
+The authoritative G07 model is **`LATEST_UNIQUE_DIRECT_G05_DAMAGE_INITIATIVE_V1`**.
 
-The first actor to establish unique direct verified damage pressure becomes the initial physical initiative leader. A comeback/reversal is observed only when an actor that was previously damaged by that leader later earns enough unique direct verified damage pressure to overtake the initial leader. The state machine records the before/after scores and physical receipts. No actor is moved or strengthened to make the reversal happen; if physics does not earn it, G07 fails.
+This intentionally does **not** require cumulative multi-hit score overtaking. G04 is a goal-driven controller; after a successful damage event it is not required to manufacture repeated extra hits simply to satisfy a drama score. Requiring repeated score accumulation would turn the acceptance into test-driven choreography.
+
+The physical initiative rules are:
+
+1. Only a **unique direct G05 VERIFIED physical transaction that actually earns damage** can establish or change initiative.
+2. Mirrored damage rows and inherited reciprocal aliases never create independent initiative.
+3. The first such direct damage transaction establishes the initial physical initiative actor.
+4. A later actor earns a genuine reversal/comeback when:
+   - that actor previously received G05/G06-backed damage from the initial initiative actor; and
+   - it later earns its own unique direct G05 VERIFIED damage transaction against that actor.
+5. The latest qualifying direct damage transaction is the initiative authority. No cumulative severity threshold, repeated-hit quota, asset-specific score or scripted winner is required.
+6. The state machine records the before/after initiative evidence and exact physical receipt provenance. If physics does not earn the counter-hit, G07 fails.
+
+This models the generic causal relation “you physically damaged me → I later physically counter-damaged you → initiative reversed” without vehicle-specific choreography.
 
 ### Lifecycle integration
 
 Candidate 4.4 may gate event activation/completion and camera event eligibility, but it must reuse the existing G04 controller, G05 resolver and G06 persistence path unchanged.
 
-For a counterattack, meeting the base contact/damage count is not enough to terminate the goal if the required physical reversal has not yet emerged; the same autonomous goal may continue/replan within the continuous run. This is state-driven replanning, not forced choreography.
+For a counterattack, base contact/damage counts are insufficient unless the prior-damage guard and physical reversal evidence exist. The autonomous goal may continue/replan within the continuous run. This is state-driven control, not forced choreography.
 
 ### Outcome
 
@@ -157,27 +157,42 @@ One Candidate 4.4 workflow must perform:
 1. zero-cost syntax/property/no-cheating checks;
 2. exact private full-source Bugatti identity acquisition;
 3. Candidate 3.9 asset/semantic regression;
-4. exact Bugatti Candidate 4.4 run on Blender 4.5.13;
-5. identical-source generic-hypercar Candidate 4.4 run using the same runtime source;
-6. strict machine-result validation that preserves G04/G05/G06 and proves:
+4. preserved Candidate 4.3 G06 regression where practical, using the unchanged G06 source and acceptance validator;
+5. exact Bugatti Candidate 4.4 run on Blender 4.5.13;
+6. identical-source generic-hypercar Candidate 4.4 run using the same Candidate 4.4 runtime source;
+7. strict machine-result validation proving:
    - continuous world;
    - G05 VERIFIED direct physical transactions;
-   - G06 persistent damage/debris;
+   - G06 persistent damage/debris and degraded capability consumption;
    - state-driven counterattack eligibility from prior damage;
    - escalation evidence;
-   - physical dominance reversal/comeback evidence;
+   - `LATEST_UNIQUE_DIRECT_G05_DAMAGE_INITIATIVE_V1` reversal/comeback evidence;
    - climax activation after reversal;
    - payoff after climax;
    - final causal outcome with no forced winner;
    - no pose/velocity/reset/threshold/choreography cheating;
-7. artifact upload with logs and JSON evidence.
+8. artifact upload with logs and JSON evidence.
 
-The machine validator must fail closed. It must not convert missing reversal/climax/payoff evidence into warnings.
+The machine validator must fail closed. Missing reversal/climax/payoff evidence is a failure, not a warning.
 
 ## Known infrastructure preflight
 
-Before the first real G07 workflow run, extend the existing private-asset helper OIDC allowlist with **only** the exact Candidate 4.4 G07 workflow reference. Preserve all existing issuer, audience, repository, branch/ref, runner, time and RSA signature checks. This prevents recurrence of the already-engineered G06 pre-runtime scope failure without weakening security.
+Before the first real G07 workflow run, extend the private-asset helper OIDC allowlist with **only** the exact Candidate 4.4 G07 workflow reference. Preserve all existing issuer, audience, repository, branch/ref, runner, time and RSA signature checks.
+
+## ISS-R041 scope preflight
+
+Candidate 4.4 design remains within locked project scope:
+
+- one runtime source for both acceptance fixtures;
+- no vehicle-name branch in runtime;
+- fixture actor IDs exist only in request/test data, not battle-engine source;
+- no exact collision frame, impact energy, trajectory or winner target;
+- asset identity/profile differences remain data;
+- Story remains intent/dependency input;
+- physical events remain Blender/G05/G06 authority.
+
+**Pre-acceptance scope status: SCOPE PRESERVED.** Final post-Gate scope status still requires terminal machine acceptance evidence.
 
 ## Exit decision
 
-This audit supports creating exactly one clean Candidate 4.4 G07 successor. No locked production service or prior MACHINE_PROVEN runtime source requires redesign.
+This audit supports exactly one clean Candidate 4.4 G07 successor. No locked production service or prior MACHINE_PROVEN runtime source requires redesign.
