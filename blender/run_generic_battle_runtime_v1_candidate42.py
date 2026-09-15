@@ -9,6 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+import bpy
 from mathutils import Quaternion, Vector
 
 from blender import iss_blender_battle_runtime_v1 as runtime
@@ -62,10 +63,7 @@ def _pair_geometry_at(attacker: Any, target: Any, frame: int) -> dict[str, Any] 
     delta = t_pos - a_pos
     delta.z = 0.0
     center_distance = float(delta.length)
-    if center_distance <= 1.0e-8:
-        normal = Vector((1.0, 0.0, 0.0))
-    else:
-        normal = delta.normalized()
+    normal = Vector((1.0, 0.0, 0.0)) if center_distance <= 1.0e-8 else delta.normalized()
     attacker_support = _support_radius_at(attacker, a_rot, normal)
     target_support = _support_radius_at(target, t_rot, -normal)
     gap = center_distance - attacker_support - target_support
@@ -93,9 +91,9 @@ def _collision_margin(actor: Any) -> float:
 
 
 def _locality_tolerance(attacker: Any, target: Any) -> float:
-    # This is a numerical locality tolerance derived from the solver collision
-    # margins plus a fixed 4 cm frame-sampling allowance.  It is not an impact,
-    # damage, semantic, or viewer-facing acceptance threshold.
+    # Locality only: actual solver collision margins plus 4 cm frame-sampling
+    # numerical allowance. This does not alter impact, damage, semantic, or
+    # viewer-facing acceptance thresholds.
     return float(_collision_margin(attacker) + _collision_margin(target) + 0.04)
 
 
@@ -170,7 +168,7 @@ def _pairwise_receipt(
         attacker_id,
         attacker,
         contact_frame,
-        runtime.bpy.context.scene.render.fps,
+        bpy.context.scene.render.fps,
     )
     if not handoff:
         marker(
@@ -341,6 +339,25 @@ def pairwise_detect_contacts(
             cooldown[key] = frame + max(3, program.fps // 4)
 
 
+def _rewrite_detector_metadata(row: dict[str, Any], actors: dict[str, Any]) -> None:
+    for field in ("evidence", "attackerEvidence"):
+        evidence = row.get(field)
+        if isinstance(evidence, dict):
+            evidence["detector"] = CONTACT_AUTHORITY
+    evidence = row.get("evidence") or {}
+    evidence_frame = int(evidence.get("frame") or -1)
+    attacker_id = str(evidence.get("attacker_id") or "")
+    target_id = str(evidence.get("target_id") or "")
+    for actor in actors.values():
+        for damage in actor.state.damage_events:
+            if (
+                int(damage.get("frame") or -2) == evidence_frame
+                and str(damage.get("attackerId") or "") == attacker_id
+                and str(damage.get("targetId") or "") == target_id
+            ):
+                damage["detector"] = CONTACT_AUTHORITY
+
+
 def pairwise_resolve_pending_contacts(
     frame: int,
     actors: dict[str, Any],
@@ -384,6 +401,7 @@ def pairwise_resolve_pending_contacts(
             raise BlenderBattleRuntimeError(
                 f"G05_QUALIFIED_IMPACT_WITHOUT_PAIRWISE_RECEIPT:{key[0]}:{key[1]}"
             )
+        _rewrite_detector_metadata(row, actors)
         row["nativeContactReceipt"] = receipt
         row["nativeContactAuthority"] = True
         row["contactAuthorityModel"] = CONTACT_AUTHORITY
@@ -448,6 +466,7 @@ def pairwise_coalescing_resolve_pending_contacts(
         row["nativeContactAuthority"] = True
         row["nativeContactInheritedFromPhysicalTransaction"] = True
         row["contactAuthorityModel"] = CONTACT_AUTHORITY
+        _rewrite_detector_metadata(row, actors)
         marker(
             "G05_RECIPROCAL_EVENT_INHERITS_PAIRWISE_PHYSICAL_TRANSACTION",
             frame=(row.get("evidence") or {}).get("frame"),
