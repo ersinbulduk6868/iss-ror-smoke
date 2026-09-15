@@ -25,6 +25,7 @@ from blender.iss_battle_runtime_models import (  # noqa: E402
     SpawnPlanner,
     WaveScheduler,
 )
+from blender.iss_battle_runtime_lifecycle import BattleLifecycle  # noqa: E402
 
 GENERIC_FILES = (
     "blender/iss_battle_runtime_contract.py",
@@ -34,17 +35,26 @@ GENERIC_FILES = (
     "blender/iss_battle_runtime_physics.py",
     "blender/iss_battle_runtime_consequences.py",
     "blender/iss_battle_runtime_camera.py",
+    "blender/iss_battle_runtime_lifecycle.py",
     "blender/iss_blender_battle_runtime_v1.py",
+    "blender/iss_blender_battle_runtime_v1_hardened.py",
 )
 REQUIRED_FILES = GENERIC_FILES + (
     "docs/GENERIC_BATTLE_RUNTIME_V1_ENGINEERING_PLAN.md",
 )
+# Runtime implementation must not contain scenario/product-specific names. Generic
+# semantic words such as car/body/wheel/blade are intentionally allowed.
 BANNED_SCENARIO_TOKENS = (
     "bugatti",
     "ferrari",
     "lamborghini",
     "mclaren",
     "koenigsegg",
+    "bulldozer_a",
+    "bulldozer_b",
+    "bulldozer_c",
+    "100_ferrari",
+    "100 ferrari",
 )
 FORBIDDEN_POSE_PATHS = {
     "location",
@@ -52,8 +62,33 @@ FORBIDDEN_POSE_PATHS = {
     "rotation_quaternion",
     "scale",
 }
+FORBIDDEN_DIRECT_DYNAMICS = (
+    ".linear_velocity",
+    ".angular_velocity",
+)
 LOCKED_BLOB_SHA = {
     "blender/iss_blender_production_worker.py": "1b58ef30e899591ec9eb05133afa756ed0fa0b5b",
+}
+HARDENED_REQUIRED_TOKENS = {
+    "blender/iss_battle_runtime_physics.py": (
+        "def coast(",
+        'CONTROL_MODEL = "DIFFERENTIAL_RIGID_BODY_MOTOR_V1_1"',
+        '"controllerCutoff"',
+    ),
+    "blender/iss_battle_runtime_lifecycle.py": (
+        "minQualifiedContacts",
+        "minDistinctAttackers",
+        "damage_earned",
+    ),
+    "blender/iss_blender_battle_runtime_v1_hardened.py": (
+        'RUNTIME_VERSION = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_2_HARDENED"',
+        "MIN_DAMAGE_SEVERITY = 0.055",
+        "CONTACT_REJECTED_CONTROLLER_AUTHORITY",
+        "controller_cutoff_observed",
+        "ForwardPreviewDirector",
+        "FORWARD_PREVIEW_MISSING",
+        "BattleLifecycle",
+    ),
 }
 
 
@@ -104,10 +139,11 @@ class SafetyVisitor(ast.NodeVisitor):
     def visit_Assign(self, node: ast.Assign) -> Any:
         for target in node.targets:
             chain = attr_chain(target)
-            if chain.endswith(".linear_velocity"):
-                self.failures.append(
-                    f"DIRECT_LINEAR_VELOCITY_ASSIGNMENT_FORBIDDEN:{self.relative}:{node.lineno}"
-                )
+            for suffix in FORBIDDEN_DIRECT_DYNAMICS:
+                if chain.endswith(suffix):
+                    self.failures.append(
+                        f"DIRECT_DYNAMICS_ASSIGNMENT_FORBIDDEN:{self.relative}:{chain}:{node.lineno}"
+                    )
             if (
                 any(chain.endswith("." + x) for x in FORBIDDEN_POSE_PATHS)
                 and ".chassis." in chain
@@ -126,9 +162,12 @@ def static_source_audit() -> dict[str, Any]:
         if not path.is_file():
             failures.append(f"REQUIRED_FILE_MISSING:{relative}")
 
-    duplicate = ROOT / "blender/battle_runtime_contract.py"
-    if duplicate.exists():
-        failures.append("SUPERSEDED_DUPLICATE_CONTRACT_PRESENT")
+    for obsolete in (
+        "blender/battle_runtime_contract.py",
+        "blender/battle_runtime_core.py",
+    ):
+        if (ROOT / obsolete).exists():
+            failures.append(f"SUPERSEDED_DUPLICATE_PRESENT:{obsolete}")
 
     for relative in GENERIC_FILES:
         path = ROOT / relative
@@ -139,6 +178,9 @@ def static_source_audit() -> dict[str, Any]:
         for token in BANNED_SCENARIO_TOKENS:
             if token in lower:
                 failures.append(f"SCENARIO_HARDCODE_FORBIDDEN:{relative}:{token}")
+        for token in HARDENED_REQUIRED_TOKENS.get(relative, ()):
+            if token not in source:
+                failures.append(f"HARDENED_RUNTIME_TOKEN_MISSING:{relative}:{token}")
         try:
             tree = ast.parse(source, filename=relative)
         except SyntaxError as exc:
@@ -168,6 +210,7 @@ def static_source_audit() -> dict[str, Any]:
         "status": "PASS",
         "parsedPythonFiles": parsed,
         "lockedReferenceChecks": len(LOCKED_BLOB_SHA),
+        "hardenedFiles": len(HARDENED_REQUIRED_TOKENS),
     }
 
 
@@ -242,6 +285,8 @@ def make_request(actor_count: int = 100) -> tuple[dict[str, Any], list[dict[str,
                         "speedIntent": "accelerate",
                         "trajectory": "direct converging approach",
                         "targetArea": "front",
+                        "minQualifiedContacts": 1,
+                        "minDistinctAttackers": 1,
                     },
                 },
                 {
@@ -408,9 +453,7 @@ def impact_damage_properties() -> dict[str, Any]:
             f"CUMULATIVE_DAMAGE_NOT_PERSISTENT:{before}:{first}:{second}"
         )
 
-    event_states = {
-        "e": EventState("e", status="SUCCEEDED"),
-    }
+    event_states = {"e": EventState("e", status="SUCCEEDED")}
     outcome = OutcomeResolver.resolve({"beta": state}, event_states)
     if outcome["allRequiredEventsSucceeded"] is not True:
         raise ValidationError("OUTCOME_RESOLVER_SUCCESS_REGRESSION")
@@ -422,12 +465,39 @@ def impact_damage_properties() -> dict[str, Any]:
     }
 
 
+def lifecycle_properties() -> dict[str, Any]:
+    request, bindings = make_request(5)
+    program = BattleCompiler.compile(request, bindings)
+    event = next(x for x in program.events if x.event_id == "evt_wave")
+    state = EventState(event.event_id, status="ACTIVE")
+    lifecycle = BattleLifecycle()
+    min_contacts, min_distinct = lifecycle.requirements(event)
+    if (min_contacts, min_distinct) != (1, 1):
+        raise ValidationError(
+            f"LIFECYCLE_REQUIREMENTS_UNEXPECTED:{min_contacts}:{min_distinct}"
+        )
+    if lifecycle.requirements_met(event, state):
+        raise ValidationError("LIFECYCLE_FALSE_SUCCESS_WITHOUT_CONTACT")
+    state.contact_count = 1
+    state.damage_count = 1
+    lifecycle.note_impact(event, event.attackers[0], damage_earned=True)
+    if not lifecycle.requirements_met(event, state):
+        raise ValidationError("LIFECYCLE_REQUIRED_EVIDENCE_NOT_ACCEPTED")
+    return {
+        "status": "PASS",
+        "minQualifiedContacts": min_contacts,
+        "minDistinctAttackers": min_distinct,
+        "qualifiedAttackers": 1,
+    }
+
+
 def main() -> None:
     result = {
         "static": static_source_audit(),
         "compilerScale": compiler_scale_properties(),
         "failClosed": contract_fail_closed_properties(),
         "impactDamage": impact_damage_properties(),
+        "lifecycle": lifecycle_properties(),
     }
     print(
         json.dumps(
