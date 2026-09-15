@@ -85,17 +85,19 @@ def main() -> None:
         '"forcedWinner": False',
         '"exactCollisionFrameTarget": False',
         '"exactImpactEnergyTarget": False',
+        'raw = json.dumps(req, sort_keys=True).lower()',
+        'CANDIDATE44_FORBIDDEN_EXECUTABLE_CHOREOGRAPHY',
     )
     missing_builder = [token for token in required_builder if token not in builder]
     if missing_builder:
         fail("CANDIDATE44_FIXTURE_CONTRACT_MISSING:" + "|".join(missing_builder))
 
-    # Reject actual executable choreography fields by AST dictionary-key identity.
-    # Do not substring-count diagnostic booleans such as
-    # `exactCollisionFrameTarget: false`; those are explicit proof that no such
-    # target exists and are not executable request fields. The fixture builder
-    # additionally validates the fully materialized request JSON at runtime.
-    forbidden_builder_keys = {
+    # Static AST gate for literal executable request keys. Diagnostic output
+    # booleans (for example forcedWinner=false) are deliberately not treated as
+    # request choreography. The builder itself separately serializes each fully
+    # materialized request and fail-closes on *all* forbidden choreography
+    # substrings, including forcedwinner/winnerid, before a fixture is accepted.
+    forbidden_static_request_keys = {
         "collisionframe",
         "contactframe",
         "impactframe",
@@ -107,11 +109,10 @@ def main() -> None:
         "waypoints",
         "positionkeyframes",
         "velocitykeyframes",
-        "forcedwinner",
         "winnerid",
     }
     actual_keys = literal_dict_keys(builder_tree)
-    bad_keys = sorted({key for key in actual_keys if key.lower() in forbidden_builder_keys})
+    bad_keys = sorted({key for key in actual_keys if key.lower() in forbidden_static_request_keys})
     if bad_keys:
         fail("CANDIDATE44_FIXTURE_FORBIDDEN_EXECUTABLE_FIELD:" + "|".join(bad_keys))
 
@@ -128,7 +129,7 @@ def main() -> None:
         "candidate": "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_4_G07",
         "dramaModel": "PHYSICAL_CAUSAL_DRAMA_STATE_MACHINE_V1",
         "dominanceModel": "LATEST_UNIQUE_DIRECT_G05_DAMAGE_INITIATIVE_V1",
-        "builderChoreographyFieldAudit": "AST_LITERAL_DICT_KEYS_PASS",
+        "builderChoreographyFieldAudit": "AST_KEYS_PLUS_MATERIALIZED_REQUEST_FAIL_CLOSED",
         "g04SourceMutationRequired": False,
         "g05SourceMutationRequired": False,
         "g06SourceMutationRequired": False,
