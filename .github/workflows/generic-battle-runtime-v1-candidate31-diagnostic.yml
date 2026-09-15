@@ -1,0 +1,78 @@
+name: ISS Generic Battle Runtime v1 Candidate 3.1 propulsion diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iss-engineering/generic-battle-runtime-v1
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate31-diagnostic.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate31_diag.py'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic:
+    name: Candidate 3.1 propulsion diagnostic
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      BLENDER_VERSION: '4.5.13'
+      EXPECTED_ASSET_SHA: '0b2710a840d128aee53161277edb8cb77e1930d339f53585c6faece3f1dc2b1c'
+
+    steps:
+      - name: Checkout exact diagnostic candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Build exact generic fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACTUAL_SHA="$(sha256sum assets/generated/generic-hypercar-v1/generic_hypercar.glb | awk '{print $1}')"
+          test "$ACTUAL_SHA" = "$EXPECTED_ASSET_SHA"
+          python3 tools/build_generic_battle_runtime_v1_preflight.py
+
+      - name: Install Blender dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          ARCHIVE=".blender/blender-${BLENDER_VERSION}.tar.xz"
+          curl --fail --location --retry 3 --retry-all-errors "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o "$ARCHIVE"
+          tar -xJf "$ARCHIVE" -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          test -x "$BLENDER_BIN"
+          "$BLENDER_BIN" --version | grep "Blender ${BLENDER_VERSION}"
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run propulsion diagnostic without preview gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup \
+            --python blender/run_generic_battle_runtime_v1_candidate31_diag.py -- \
+            --request artifacts/generic-battle-runtime-v1-preflight/request.json \
+            --asset-map artifacts/generic-battle-runtime-v1-preflight/asset-map.json \
+            --output-dir artifacts/generic-battle-runtime-v1-preflight \
+            2>&1 | tee generic-runtime-candidate31-diagnostic.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE31_DIAGNOSTIC_BOOTSTRAP_PASS"' generic-runtime-candidate31-diagnostic.log
+          grep -q '"marker": "PROPULSION_DIAGNOSTIC"' generic-runtime-candidate31-diagnostic.log
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate31-diagnostic-${{ github.run_id }}
+          path: |
+            generic-runtime-candidate31-diagnostic.log
+            artifacts/generic-battle-runtime-v1-preflight/
+          if-no-files-found: warn
+          retention-days: 7
