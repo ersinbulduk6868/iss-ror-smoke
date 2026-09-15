@@ -18,7 +18,10 @@ from blender import run_generic_battle_runtime_v1_candidate39 as candidate39
 from blender import run_generic_battle_runtime_v1_candidate40 as candidate40
 from blender.iss_battle_runtime_assets import BlenderBattleRuntimeError, marker
 from blender.iss_battle_runtime_contact_truth import (
+    OUTER_AUTHORITY_MODEL,
     PAIRWISE_RESPONSE_MODEL,
+    ContactOuterAuthorityGate,
+    ContactOuterAuthoritySample,
     PairwiseSolverResponseOracle,
     PairwiseSolverSample,
 )
@@ -160,9 +163,6 @@ def _pairwise_receipt(
 
     locality_tolerance = _locality_tolerance(attacker, target)
     locality_gap = float(geometry["gapM"])
-    if locality_gap > locality_tolerance:
-        return None
-
     handoff, cutoff_frame, motor_authority_zero = _controller_handoff(
         event.event_id,
         attacker_id,
@@ -170,16 +170,40 @@ def _pairwise_receipt(
         contact_frame,
         bpy.context.scene.render.fps,
     )
-    if not handoff:
+
+    zone_point = _historical_zone_world(target, event.target_zone, geometry)
+    contact_point = Vector(geometry["targetSurface"])
+    semantic_distance = float((contact_point - zone_point).length)
+    semantic_tolerance = float(runtime._semantic_tolerance(target, event.target_zone))
+
+    outer = ContactOuterAuthorityGate.evaluate(
+        ContactOuterAuthoritySample(
+            intended_target_id=str(event.target_id or ""),
+            observed_pair_target_id=str(target.profile.entity_id),
+            controller_handoff=bool(handoff),
+            motor_authority_zero=bool(motor_authority_zero),
+            locality_gap_m=locality_gap,
+            locality_tolerance_m=locality_tolerance,
+            semantic_distance_m=semantic_distance,
+            semantic_tolerance_m=semantic_tolerance,
+        )
+    )
+    if not outer.qualified:
         marker(
-            "G05_PAIRWISE_RESPONSE_REJECTED_CONTROLLER_AUTHORITY",
+            "G05_OUTER_CONTACT_AUTHORITY_REJECTED",
             frame=frame,
             contactFrame=contact_frame,
             eventId=event.event_id,
             attackerId=attacker_id,
             targetId=event.target_id,
+            reason=outer.reason,
             cutoffFrame=cutoff_frame,
             motorAuthorityZero=motor_authority_zero,
+            pairwiseLocalityGapM=round(locality_gap, 6),
+            pairwiseLocalityToleranceM=round(locality_tolerance, 6),
+            semanticDistance=round(semantic_distance, 6),
+            semanticTolerance=round(semantic_tolerance, 6),
+            model=OUTER_AUTHORITY_MODEL,
         )
         return None
 
@@ -202,27 +226,10 @@ def _pairwise_receipt(
     if not solver.qualified:
         return None
 
-    zone_point = _historical_zone_world(target, event.target_zone, geometry)
-    contact_point = Vector(geometry["targetSurface"])
-    semantic_distance = float((contact_point - zone_point).length)
-    semantic_tolerance = float(runtime._semantic_tolerance(target, event.target_zone))
-    if semantic_distance > semantic_tolerance:
-        marker(
-            "G05_PAIRWISE_RESPONSE_REJECTED_SEMANTIC_ZONE",
-            frame=frame,
-            contactFrame=contact_frame,
-            eventId=event.event_id,
-            attackerId=attacker_id,
-            targetId=event.target_id,
-            targetZone=event.target_zone,
-            semanticDistance=round(semantic_distance, 6),
-            semanticTolerance=round(semantic_tolerance, 6),
-        )
-        return None
-
     receipt = {
         "status": "VERIFIED",
         "model": CONTACT_AUTHORITY,
+        "outerAuthorityModel": OUTER_AUTHORITY_MODEL,
         "localityModel": LOCALITY_MODEL,
         "semanticModel": SEMANTIC_MODEL,
         "eventId": str(event.event_id),
@@ -244,9 +251,11 @@ def _pairwise_receipt(
         "semanticDistance": round(semantic_distance, 6),
         "semanticTolerance": round(semantic_tolerance, 6),
         "semanticPass": True,
+        "targetIdentityPass": True,
         "controllerCutoffObserved": True,
         "cutoffFrame": int(cutoff_frame) if cutoff_frame is not None else None,
         "motorAuthorityZero": bool(motor_authority_zero),
+        "outerAuthorityReceipt": outer.as_dict(),
         "pairwiseSolverReceipt": solver.as_dict(),
         "obbFinalContactAuthority": False,
         "nativeSweepFinalContactAuthority": False,
@@ -489,6 +498,7 @@ def main() -> None:
                 "marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE42_G05_ENGINEERING_PASS",
                 "candidate": CANDIDATE,
                 "contactAuthorityModel": CONTACT_AUTHORITY,
+                "outerAuthorityModel": OUTER_AUTHORITY_MODEL,
                 "pairwiseResponseOracle": "PairwiseSolverResponseOracle",
                 "localityModel": LOCALITY_MODEL,
                 "semanticModel": SEMANTIC_MODEL,
