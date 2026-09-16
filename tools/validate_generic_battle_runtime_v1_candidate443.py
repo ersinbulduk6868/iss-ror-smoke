@@ -74,14 +74,20 @@ def main() -> None:
     if missing_builder:
         fail("CANDIDATE443_BUILDER_CONTRACT_MISSING:" + "|".join(missing_builder))
 
-    for required_scope in (
-        "ISS-R042",
-        "Asset-independent autonomous collision realization",
-        "Story/G07 expresses battle intent and causal state only",
-        "per-asset collision engineering",
-    ):
-        if required_scope not in scope:
-            fail(f"CANDIDATE443_SCOPE_LOCK_MISSING:{required_scope}")
+    # Verify the actual locked semantics, not brittle capitalization or incidental
+    # prose wording. These phrases are the operative R042 contract in the scope doc.
+    scope_lower = scope.lower()
+    required_scope_semantics = (
+        "iss-r042",
+        "asset-independent autonomous collision realization",
+        "story/g07 expresses battle intent and causal state only",
+        "g07 must not calculate or prescribe collision mechanics per vehicle",
+        "hard-coded contact zone required to make a fixture pass",
+        "damage-threshold tuning used to manufacture drama progression",
+    )
+    for semantic in required_scope_semantics:
+        if semantic not in scope_lower:
+            fail(f"CANDIDATE443_SCOPE_LOCK_SEMANTIC_MISSING:{semantic}")
 
     print(json.dumps({
         "marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE443_G07_PROPERTY_ACCEPTANCE",
@@ -95,6 +101,7 @@ def main() -> None:
         "semanticSelectionFromLiveGeometry": True,
         "semanticZoneNamesHardCodedInRuntime": False,
         "perAssetCollisionEngineering": False,
+        "scopeValidation": "SEMANTIC_CASE_INSENSITIVE",
         "g04SourceMutationRequired": False,
         "g05SourceMutationRequired": False,
         "g06SourceMutationRequired": False,
