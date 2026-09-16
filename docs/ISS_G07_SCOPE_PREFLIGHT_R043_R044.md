@@ -54,4 +54,8 @@ Under ISS-R043 and ISS-R044:
 3. after machine acceptance, project scope must be reread and a SCOPE POST-FLIGHT report must be presented to the user;
 4. G07 remains OPEN until the user explicitly answers **OK** to the post-flight report.
 
+## Clean acceptance retrigger provenance
+
+The first Candidate 4.4.5 workflow invocation occurred before its exact OIDC workflow reference had been added to the private-asset helper. It passed the scope/property gate and then stopped at OIDC authorization before asset acquisition or Blender execution. The helper is now version `3.3.12-generic-runtime-candidate445-g07-access`, with only the exact Candidate 4.4.5 workflow reference added and all issuer, audience, repository, ref, runner, time and signature controls preserved. This documentation-only update intentionally retriggers the unchanged Candidate 4.4.5 acceptance after authorization is ready.
+
 **SCOPE PRE-FLIGHT RESULT: PASS**
