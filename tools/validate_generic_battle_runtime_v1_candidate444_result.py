@@ -10,6 +10,7 @@ import validate_generic_battle_runtime_v1_candidate443_result as candidate443
 
 EXPECTED_RUNTIME = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_4_4_G07"
 EXPECTED_HANDOFF_MODEL = "STATE_DERIVED_SOLVER_HANDOFF_LIFECYCLE_V1"
+EXPECTED_PERSISTENCE_MODEL = "CAUSAL_DAMAGE_PERSISTENT_STATE_V1"
 _ORIGINAL_VALIDATE_DRAMA_443 = candidate443.validate_drama_443
 
 candidate443.EXPECTED_RUNTIME = EXPECTED_RUNTIME
@@ -19,6 +20,79 @@ candidate443.base.EXPECTED_RUNTIME = EXPECTED_RUNTIME
 def require(condition: bool, code: str) -> None:
     if not condition:
         raise candidate443.base.ValidationError(code)
+
+
+def validate_persistence(persistence: dict[str, Any], label: str) -> dict[str, Any]:
+    require(persistence.get("status") == "OBSERVED", f"{label}:G06_PERSISTENCE_STATUS:{persistence.get('status')}")
+    require(persistence.get("candidate") == EXPECTED_RUNTIME, f"{label}:G06_PERSISTENCE_CANDIDATE:{persistence.get('candidate')}")
+    require(persistence.get("model") == EXPECTED_PERSISTENCE_MODEL, f"{label}:G06_PERSISTENCE_MODEL:{persistence.get('model')}")
+    for flag in (
+        "actorPoseOrVelocityMutation",
+        "damageThresholdChanged",
+        "contactThresholdChanged",
+        "stateResetMechanismIntroduced",
+        "debrisTrajectoryInjectionIntroduced",
+        "productionReadyClaimed",
+    ):
+        require(persistence.get(flag) is False, f"{label}:G06_FORBIDDEN_FLAG:{flag}:{persistence.get(flag)}")
+
+    require(int(persistence.get("g05DamageProvenanceBoundCount") or 0) >= 1, f"{label}:G06_G05_PROVENANCE_BINDING_MISSING")
+    require(bool(persistence.get("g05BoundImpacts") or []), f"{label}:G06_G05_BOUND_IMPACTS_EMPTY")
+
+    final_actors = persistence.get("finalActors") or {}
+    require(bool(final_actors), f"{label}:G06_FINAL_ACTORS_EMPTY")
+    damaged_actor_count = 0
+    persistent_shape_keys = 0
+    persistent_debris = 0
+    for actor_id, actor in final_actors.items():
+        state = (actor or {}).get("state") or {}
+        damage_events = state.get("damageEvents") or []
+        if not damage_events:
+            continue
+        damaged_actor_count += 1
+        require(float(state.get("structuralIntegrity", 1.0)) < 1.0, f"{label}:{actor_id}:G06_STRUCTURAL_STATE_NOT_DEGRADED")
+        require(float(state.get("driveEfficiency", 1.0)) < 1.0, f"{label}:{actor_id}:G06_DRIVE_STATE_NOT_DEGRADED")
+        for damage in damage_events:
+            require(damage.get("g05NativeContactAuthority") is True, f"{label}:{actor_id}:G06_DAMAGE_WITHOUT_G05")
+            require(damage.get("g05ReceiptStatus") == "VERIFIED", f"{label}:{actor_id}:G06_DAMAGE_RECEIPT_NOT_VERIFIED")
+            require(damage.get("g05ContactAuthorityModel") == candidate443.base.EXPECTED_CONTACT_AUTHORITY, f"{label}:{actor_id}:G06_DAMAGE_AUTHORITY_MISMATCH")
+        visual = (actor or {}).get("visual") or {}
+        shape_keys = [row for row in (visual.get("damageShapeKeys") or []) if float((row or {}).get("value") or 0.0) > 0.0]
+        debris = visual.get("debris") or []
+        persistent_shape_keys += len(shape_keys)
+        persistent_debris += len(debris)
+        for row in debris:
+            require(row.get("trajectoryInjection") is False, f"{label}:{actor_id}:G06_DEBRIS_TRAJECTORY_INJECTION")
+            require(row.get("rigidBodyPresent") is True, f"{label}:{actor_id}:G06_DEBRIS_RIGID_BODY_MISSING")
+            require(row.get("kinematic") is not True, f"{label}:{actor_id}:G06_DEBRIS_KINEMATIC")
+
+    require(damaged_actor_count >= 1, f"{label}:G06_NO_DAMAGED_ACTOR")
+    require(persistent_shape_keys >= 1, f"{label}:G06_PERSISTENT_DAMAGE_SHAPE_KEY_MISSING")
+    require(persistent_debris >= 1, f"{label}:G06_PERSISTENT_DEBRIS_MISSING")
+
+    later = persistence.get("laterDamagedEventObservations") or []
+    useful = []
+    for row in later:
+        if not isinstance(row, dict):
+            continue
+        state = row.get("state") or {}
+        capability = row.get("effectiveCapability") or {}
+        if int(row.get("priorImpactFrame") or -1) >= int(row.get("eventStartFrame") or -1):
+            continue
+        efficiency = float(state.get("driveEfficiency", 1.0))
+        effective_speed = float(capability.get("effectiveMaxSpeedMps") or 0.0)
+        profile_speed = float(capability.get("profileMaxSpeedMps") or 0.0)
+        if efficiency < 1.0 and profile_speed > 0.0 and effective_speed < profile_speed and row.get("controlSample") is not None:
+            useful.append(row)
+    require(bool(useful), f"{label}:G06_LATER_DEGRADED_STATE_CONSUMPTION_MISSING")
+
+    return {
+        "persistenceStatus": "PASS",
+        "damagedActorCount": damaged_actor_count,
+        "persistentDamageShapeKeyCount": persistent_shape_keys,
+        "persistentDebrisCount": persistent_debris,
+        "laterDamagedStateObservationCount": len(useful),
+    }
 
 
 def validate_drama_444(drama: dict[str, Any], label: str) -> dict[str, Any]:
@@ -74,23 +148,44 @@ def validate_drama_444(drama: dict[str, Any], label: str) -> dict[str, Any]:
 candidate443.base.validate_drama = validate_drama_444
 
 
+def validate_one(
+    evidence_path: str,
+    drama_path: str,
+    persistence_path: str,
+    expected_sha: str,
+    label: str,
+) -> dict[str, Any]:
+    base_result = candidate443.base.validate_one(
+        candidate443.base.load(Path(evidence_path)),
+        candidate443.base.load(Path(drama_path)),
+        expected_sha,
+        label,
+    )
+    persistence_result = validate_persistence(candidate443.base.load(Path(persistence_path)), label)
+    return {**base_result, **persistence_result}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bugatti-evidence", required=True)
     parser.add_argument("--bugatti-drama", required=True)
+    parser.add_argument("--bugatti-persistence", required=True)
     parser.add_argument("--generic-evidence", required=True)
     parser.add_argument("--generic-drama", required=True)
+    parser.add_argument("--generic-persistence", required=True)
     args = parser.parse_args()
 
-    bugatti = candidate443.base.validate_one(
-        candidate443.base.load(Path(args.bugatti_evidence)),
-        candidate443.base.load(Path(args.bugatti_drama)),
+    bugatti = validate_one(
+        args.bugatti_evidence,
+        args.bugatti_drama,
+        args.bugatti_persistence,
         candidate443.base.EXPECTED_BUGATTI_SHA,
         "EXACT_BUGATTI",
     )
-    generic = candidate443.base.validate_one(
-        candidate443.base.load(Path(args.generic_evidence)),
-        candidate443.base.load(Path(args.generic_drama)),
+    generic = validate_one(
+        args.generic_evidence,
+        args.generic_drama,
+        args.generic_persistence,
         candidate443.base.EXPECTED_GENERIC_SHA,
         "GENERIC_HYPERCAR",
     )
@@ -104,6 +199,7 @@ def main() -> None:
         "collisionPlanningAuthority": candidate443.base.EXPECTED_COLLISION_AUTHORITY,
         "engagementTargetingModel": candidate443.EXPECTED_ENGAGEMENT_MODEL,
         "handoffLifecycleModel": EXPECTED_HANDOFF_MODEL,
+        "persistenceModel": EXPECTED_PERSISTENCE_MODEL,
         "g04Preserved": True,
         "g05Preserved": True,
         "g06Preserved": True,
