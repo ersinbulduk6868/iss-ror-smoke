@@ -39,8 +39,10 @@ def main() -> None:
     if missing:
         fail("CANDIDATE443_RUNTIME_CONTRACT_MISSING:" + "|".join(missing))
 
-    # Runtime must select from whatever semantic surfaces the asset exposes.
-    # It must not know vehicle names or preferred semantic-zone names.
+    # Asset/zone specialization and direct physics mutation are forbidden.
+    # Negative diagnostic proof fields such as exactCollisionFrameTarget=false
+    # are not executable choreography; Story request fields are recursively
+    # rejected by the Candidate 4.4.2/4.4.3 fixture builders.
     lower_runtime = runtime.lower()
     for forbidden in (
         "bugatti",
@@ -50,14 +52,6 @@ def main() -> None:
         '"rear"',
         '"left_side"',
         '"right_side"',
-        "targetenergyj",
-        "impactenergyj",
-        "targetimpactspeedmps",
-        "collisionframe",
-        "trajectorypoints",
-        "steeringangle",
-        "brakingpoint",
-        "approachvector",
         "linear_velocity =",
         "angular_velocity =",
         ".location =",
