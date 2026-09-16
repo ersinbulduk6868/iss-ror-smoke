@@ -1,0 +1,200 @@
+name: ISS Generic Battle Runtime v1 Candidate 4.4.5 G07 receipt admission acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1]
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate445-g07.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate445.py'
+      - 'tools/build_generic_battle_runtime_v1_candidate445_g07.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate445.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate445_result.py'
+      - 'docs/ISS_G07_SCOPE_PREFLIGHT_R043_R044.md'
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-candidate445-g07
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  g07:
+    name: Candidate 4.4.5 G07 event-admission-only receipt wait
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Candidate 4.4.5
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Scope property no-cheating and predecessor integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile blender/run_generic_battle_runtime_v1_candidate445.py tools/build_generic_battle_runtime_v1_candidate445_g07.py tools/validate_generic_battle_runtime_v1_candidate445.py tools/validate_generic_battle_runtime_v1_candidate445_result.py
+          python3 tools/validate_generic_battle_runtime_v1_candidate445.py | tee candidate445-property.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE445_G07_PROPERTY_ACCEPTANCE"' candidate445-property.log
+          grep -q '"status": "PASS"' candidate445-property.log
+          grep -q '"gateScope": "G07_EVENT_ADMISSION_ONLY"' candidate445-property.log
+          grep -q '"directVehicleControlInG07": false' candidate445-property.log
+          grep -q '"g05CutoffStateWriteInG07": false' candidate445-property.log
+          grep -q '"g05ResolverMutationInG07": false' candidate445-property.log
+          grep -q '"g06DamageMutationInG07": false' candidate445-property.log
+          grep -q '"issR043ScopePreflightPreserved": true' candidate445-property.log
+          grep -q '"issR044UserPostflightApprovalRequired": true' candidate445-property.log
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate40.py)" = '5fac710c646e4609d4b63d0ae23e8612f1c9c81d'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate43.py)" = 'e8b7172232186e7fc8f447b65ac146aacfd58b10'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate443.py)" = '358d34c437ee27d3115117f0aaa1139704277212'
+          echo 'G04_G05_G06_AND_C443_SOURCE_INTEGRITY=PASS'
+
+      - name: Resolve exact Bugatti private read
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          m=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not m: raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(m.group(1))
+          PY
+            )"
+          fi
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          assert d.get('version')=='3.3.12-generic-runtime-candidate445-g07-access', d
+          a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('CANDIDATE445_FRESH_BUGATTI_ACCESS=PASS')
+          PY
+
+      - name: Acquire exact full-source Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee candidate445-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' candidate445-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+
+      - name: Build unchanged intent-only fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate445_g07.py --bugatti-primary "$BUGATTI_PRIMARY" | tee candidate445-fixtures.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE445_G07_FIXTURES_PASS"' candidate445-fixtures.log
+          grep -q '"fixtureSemanticsChangedFromCandidate443": false' candidate445-fixtures.log
+          grep -q '"storyTargetActorOnly": true' candidate445-fixtures.log
+          grep -q '"storyTargetZonePrescribed": false' candidate445-fixtures.log
+          grep -q '"g07ReceiptAdmissionOnly": true' candidate445-fixtures.log
+          grep -q '"perAssetCollisionEngineering": false' candidate445-fixtures.log
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee candidate445-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" candidate445-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run exact Bugatti Candidate 4.4.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate445-g07/exact-bugatti
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate445.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee candidate445-bugatti-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE445_G07_ENGINEERING_PASS' candidate445-bugatti-runtime.log
+          grep -q 'G07_GENERIC_ENGAGEMENT_SURFACE_SELECTED' candidate445-bugatti-runtime.log
+          grep -q 'G07_PHYSICAL_RECEIPT_ADMISSION' candidate445-bugatti-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate445-bugatti-runtime.log
+          grep -q 'G07_DRAMA_TRANSITION' candidate445-bugatti-runtime.log
+          grep -q 'G07_PHYSICAL_RECEIPT_ADMISSION_EVIDENCE_WRITTEN' candidate445-bugatti-runtime.log
+          grep -q '"success": true' candidate445-bugatti-runtime.log
+
+      - name: Run generic hypercar Candidate 4.4.5 identical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate445-g07/generic-hypercar
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate445.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee candidate445-generic-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE445_G07_ENGINEERING_PASS' candidate445-generic-runtime.log
+          grep -q 'G07_GENERIC_ENGAGEMENT_SURFACE_SELECTED' candidate445-generic-runtime.log
+          grep -q 'G07_PHYSICAL_RECEIPT_ADMISSION' candidate445-generic-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate445-generic-runtime.log
+          grep -q 'G07_DRAMA_TRANSITION' candidate445-generic-runtime.log
+          grep -q 'G07_PHYSICAL_RECEIPT_ADMISSION_EVIDENCE_WRITTEN' candidate445-generic-runtime.log
+          grep -q '"success": true' candidate445-generic-runtime.log
+
+      - name: Strict Candidate 4.4.5 G07 machine acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_generic_battle_runtime_v1_candidate445_result.py \
+            --bugatti-evidence artifacts/generic-battle-runtime-v1-candidate445-g07/exact-bugatti/generic-battle-runtime-v1-evidence.json \
+            --bugatti-drama artifacts/generic-battle-runtime-v1-candidate445-g07/exact-bugatti/g07-causal-drama-evidence.json \
+            --generic-evidence artifacts/generic-battle-runtime-v1-candidate445-g07/generic-hypercar/generic-battle-runtime-v1-evidence.json \
+            --generic-drama artifacts/generic-battle-runtime-v1-candidate445-g07/generic-hypercar/g07-causal-drama-evidence.json | tee candidate445-machine.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE445_G07_MACHINE_ACCEPTANCE"' candidate445-machine.log
+          grep -q '"status": "PASS"' candidate445-machine.log
+          grep -q '"g07OwnsOnlyEventAdmission": true' candidate445-machine.log
+          grep -q '"g04ControlLawChanged": false' candidate445-machine.log
+          grep -q '"g05ContactAuthorityChanged": false' candidate445-machine.log
+          grep -q '"g06DamagePersistenceChanged": false' candidate445-machine.log
+          grep -q '"perAssetCollisionEngineering": false' candidate445-machine.log
+          grep -q '"issR043ScopePreflightPreserved": true' candidate445-machine.log
+          grep -q '"issR044UserPostflightApprovalRequired": true' candidate445-machine.log
+          grep -q '"gateClosed": false' candidate445-machine.log
+          grep -q '"productionReadyClaimed": false' candidate445-machine.log
+          echo 'ISS_G07_MACHINE_ACCEPTANCE=PASS_PENDING_SCOPE_POSTFLIGHT_AND_USER_OK'
+
+      - name: Upload Candidate 4.4.5 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate445-g07-${{ github.run_id }}
+          path: |
+            candidate445-property.log
+            candidate445-asset.log
+            candidate445-fixtures.log
+            candidate445-blender-version.log
+            candidate445-bugatti-runtime.log
+            candidate445-generic-runtime.log
+            candidate445-machine.log
+            artifacts/generic-battle-runtime-v1-candidate445-g07/
+            artifacts/visual-vnext-rc2-preflight/
+          if-no-files-found: warn
+          retention-days: 14
