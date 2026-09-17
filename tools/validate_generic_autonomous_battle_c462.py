@@ -22,7 +22,7 @@ from blender.iss_battle_runtime_tactics_v4 import (
 )
 
 TACTICS = ROOT / "blender" / "iss_battle_runtime_tactics_v4.py"
-CONTROL = ROOT / "blender" / "iss_battle_runtime_generic_battle_v3.py"
+CONTROL = ROOT / "blender" / "iss_battle_runtime_generic_battle_v4.py"
 CONSEQUENCES = ROOT / "blender" / "iss_battle_runtime_consequences_v3.py"
 WRAPPER = ROOT / "blender" / "run_generic_battle_runtime_v1_candidate462_generic_battle.py"
 SOURCES = [TACTICS, CONTROL, CONSEQUENCES, WRAPPER]
@@ -199,6 +199,8 @@ def _static_scope() -> None:
         '"perAssetBattleCode": False',
         '"perVideoTrajectoryEngineering": False',
         '"stateResetMechanism": False',
+        '"damageIntentAdaptiveRetry": True',
+        '"battleSchemaDamageIntentOnly": True',
         '"gateClosed": False',
     ):
         assert required in wrapper, required
