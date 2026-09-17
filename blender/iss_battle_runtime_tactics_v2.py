@@ -10,6 +10,18 @@ def clamp(value: float, lo: float, hi: float) -> float:
     return max(float(lo), min(float(hi), float(value)))
 
 
+def wrap_pi(angle_rad: float) -> float:
+    return (float(angle_rad) + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def motion_heading_error(heading_error_rad: float, speed_intent: str) -> float:
+    """Heading error relative to the commanded direction of travel."""
+    error = wrap_pi(heading_error_rad)
+    if str(speed_intent or "").upper() == "REVERSE":
+        return wrap_pi(error - math.pi)
+    return error
+
+
 @dataclass(slots=True)
 class TacticalObservation:
     frame: int
@@ -55,6 +67,9 @@ class TacticalMemory:
     last_own_damage_count: int = 0
     break_until_frame: int = 0
     reposition_until_frame: int = 0
+    reposition_duration_frames: int = 0
+    separation_required_m: float = 0.0
+    separation_achieved: bool = True
     flank_bias: float = 1.0
     transitions: int = 0
     initialized: bool = False
@@ -111,6 +126,12 @@ class GenericBattleTacticalPlanner:
         return max(2, round(reverse_time * fps)), max(2, round(turn_time * fps))
 
     @staticmethod
+    def _separation_required(obs: TacticalObservation) -> float:
+        length_term = 0.18 * (max(0.25, obs.own_length_m) + max(0.25, obs.target_length_m))
+        width_term = 0.30 * max(max(0.25, obs.own_width_m), max(0.25, obs.target_width_m))
+        return clamp(max(0.45, length_term, width_term), 0.45, 3.50)
+
+    @staticmethod
     def _health_pressure(obs: TacticalObservation) -> float:
         own = 0.58 * clamp(obs.own_integrity, 0.0, 1.0) + 0.42 * clamp(obs.own_drive_efficiency, 0.0, 1.0)
         target = 0.58 * clamp(obs.target_integrity, 0.0, 1.0) + 0.42 * clamp(obs.target_drive_efficiency, 0.0, 1.0)
@@ -139,10 +160,6 @@ class GenericBattleTacticalPlanner:
         bias = 1.0 if symmetry_bias >= 0.0 else -1.0
         memory.flank_bias = bias
 
-        # A newly-created tactical memory must baseline persistent actor damage
-        # instead of interpreting damage inherited from a prior event as a new
-        # impact in this event. Only deltas observed after initialization may
-        # trigger BREAK_CONTACT.
         if not memory.initialized:
             memory.last_contact_count = int(obs.contact_count)
             memory.last_damage_count = int(obs.damage_count)
@@ -171,17 +188,25 @@ class GenericBattleTacticalPlanner:
             reverse_frames, turn_frames = GenericBattleTacticalPlanner._break_frames(obs)
             memory.cycle += 1
             memory.break_until_frame = int(obs.frame) + reverse_frames
+            memory.reposition_duration_frames = turn_frames
             memory.reposition_until_frame = memory.break_until_frame + turn_frames
+            memory.separation_required_m = GenericBattleTacticalPlanner._separation_required(obs)
+            memory.separation_achieved = False
             transition = GenericBattleTacticalPlanner._set_mode(memory, "BREAK_CONTACT", "REALIZED_CONTACT_OR_DAMAGE")
 
-        if obs.frame <= memory.break_until_frame:
-            transition = GenericBattleTacticalPlanner._set_mode(memory, "BREAK_CONTACT", "REALIZED_CONTACT_OR_DAMAGE") or transition
-            return TacticalGoal(
-                "BREAK_CONTACT", memory.reason, "REVERSE", clamp(base_scale * 0.72, 0.18, 0.75),
-                0.0, bias * 0.18, False, 0.0, transition, memory.cycle,
-            )
+        if memory.cycle > 0 and not memory.separation_achieved:
+            if obs.surface_gap_m >= memory.separation_required_m:
+                memory.separation_achieved = True
+                memory.reposition_until_frame = int(obs.frame) + max(2, int(memory.reposition_duration_frames))
+                transition = GenericBattleTacticalPlanner._set_mode(memory, "REPOSITION", "SEPARATION_CONFIRMED") or transition
+            else:
+                transition = GenericBattleTacticalPlanner._set_mode(memory, "BREAK_CONTACT", "SEPARATION_NOT_YET_CONFIRMED") or transition
+                return TacticalGoal(
+                    "BREAK_CONTACT", memory.reason, "REVERSE", clamp(base_scale * 0.72, 0.18, 0.75),
+                    0.0, bias * 0.18, False, 0.0, transition, memory.cycle,
+                )
 
-        if obs.frame <= memory.reposition_until_frame:
+        if memory.cycle > 0 and memory.separation_achieved and obs.frame <= memory.reposition_until_frame:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "REPOSITION", "POST_CONTACT_SPACING") or transition
             return TacticalGoal(
                 "REPOSITION", memory.reason, "ACCELERATE", clamp(base_scale * 0.52, 0.18, 0.68),
