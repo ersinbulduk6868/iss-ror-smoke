@@ -26,6 +26,7 @@ env:
   BLENDER_VERSION: '4.5.13'
   EXPECTED_SHA: '2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468'
   SOURCE_UID: 'b06a715d23a7450babac383b8bb7fb0a'
+  FERRARI_UID: 'b12954e759df43e882a0136c1403a800'
   RELAY_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/generation-nvidia-asset-worker'
 
 jobs:
@@ -50,9 +51,132 @@ jobs:
           assert d.get('status') == 'READY', d
           assert d.get('sketchfabCredentialPresent') is True, d
           assert d.get('exactSourceDownloadEnabled') is True, d
+          assert d.get('diagnosticSourceDownloadEnabled') is True, d
           print('G03_SKETCHFAB_TOKEN_BINDING=PASS')
           print('G03_ZERO_ASSET_DOWNLOAD_SMOKE=PASS')
           PY
+
+  ferrari-secondary-genericity:
+    needs: sketchfab-token-binding-smoke
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repair candidate
+        uses: actions/checkout@v4
+
+      - name: Resolve Ferrari diagnostic source and enforce size cap
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/g03-ferrari
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-asset-provider-smoke" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data "{\"mode\":\"diagnostic_source_download\",\"uid\":\"$FERRARI_UID\"}" \
+            "$RELAY_URL" > artifacts/g03-ferrari/source-access.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('artifacts/g03-ferrari/source-access.json',encoding='utf-8'))
+          assert d.get('success') is True and d.get('status')=='DIAGNOSTIC_SIGNED_SOURCE_READY', d
+          assert d.get('diagnosticOnly') is True
+          assert d.get('gateClosureEligible') is False
+          s=d['source']
+          assert s['uid']==os.environ['FERRARI_UID']
+          assert s['provider']=='sketchfab'
+          assert s['artifactKind']=='glb', s
+          observed=str(s.get('observedLicense') or '').lower()
+          assert 'attribution' in observed or 'cc' in observed, s
+          size=s.get('declaredBytes')
+          assert isinstance(size,int) and size>0, s
+          assert size <= 100_000_000, f'FERRARI_SOURCE_TOO_LARGE:{size}'
+          assert str(s['signedUrl']).startswith('https://')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('FERRARI_SOURCE_URL='+s['signedUrl']+'\n')
+              f.write('FERRARI_DECLARED_BYTES='+str(size)+'\n')
+          print('G03_FERRARI_SOURCE_PROBE=PASS')
+          print('G03_FERRARI_SIZE_CAP=PASS')
+          PY
+
+      - name: Download Ferrari exact source and calculate SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors "$FERRARI_SOURCE_URL" -o artifacts/g03-ferrari/ferrari-250-gto.glb
+          ACTUAL_SHA="$(sha256sum artifacts/g03-ferrari/ferrari-250-gto.glb | awk '{print $1}')"
+          ACTUAL_BYTES="$(stat -c '%s' artifacts/g03-ferrari/ferrari-250-gto.glb)"
+          echo "actualSha=$ACTUAL_SHA bytes=$ACTUAL_BYTES declaredBytes=$FERRARI_DECLARED_BYTES"
+          test "$ACTUAL_BYTES" -gt 10000
+          test "$ACTUAL_BYTES" -le 100000000
+          echo "FERRARI_SOURCE_SHA=$ACTUAL_SHA" >> "$GITHUB_ENV"
+          echo 'G03_FERRARI_EXACT_SOURCE_DOWNLOAD=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee artifacts/g03-ferrari/blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" artifacts/g03-ferrari/blender-version.txt
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run unchanged generic onboarding on Ferrari
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/validate_g03_ferrari_secondary_asset.py -- \
+            --asset artifacts/g03-ferrari/ferrari-250-gto.glb \
+            --result artifacts/g03-ferrari/result.json \
+            2>&1 | tee artifacts/g03-ferrari/blender-onboarding.log
+          grep -F 'ISS_G03_FERRARI_SECONDARY_GENERICITY_PASS' artifacts/g03-ferrari/blender-onboarding.log
+
+      - name: Strict Ferrari secondary genericity acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('artifacts/g03-ferrari/result.json',encoding='utf-8'))
+          assert d['status']=='PASS'
+          assert d['test']=='G03_SECONDARY_REAL_ASSET_GENERICITY'
+          assert d['gateClosureEligible'] is False
+          assert d['gateClosureClaimed'] is False
+          assert d['sourceSha256']==os.environ['FERRARI_SOURCE_SHA']
+          assert d['sameGenericAdapterSource']=='blender/iss_battle_runtime_assets.py'
+          assert d['assetSpecificBattleSourceCode'] is False
+          assert d['fixtureNameBranchRequired'] is False
+          assert d['diagnosticProfileOnly'] is True
+          assert d['productionFerrariPhysicsProfileClaimed'] is False
+          assert int(d['visibleMeshCount'])>0
+          assert d['productionReadyClaimed'] is False
+          print('ISS_G03_FERRARI_SECONDARY_MACHINE_ACCEPTANCE=PASS')
+          PY
+
+      - name: Upload Ferrari secondary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iss-g03-ferrari-secondary-${{ github.run_id }}
+          path: |
+            artifacts/g03-ferrari/source-access.json
+            artifacts/g03-ferrari/blender-version.txt
+            artifacts/g03-ferrari/blender-onboarding.log
+            artifacts/g03-ferrari/result.json
+          if-no-files-found: warn
+          retention-days: 14
 
   g03-exact-production-asset:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_exact == true }}
