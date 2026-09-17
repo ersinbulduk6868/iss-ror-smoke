@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import json
+import math
 from pathlib import Path
 import sys
 
@@ -14,6 +15,7 @@ from blender.iss_battle_runtime_tactics_v2 import (
     GenericBattleTacticalPlanner,
     TacticalMemory,
     TacticalObservation,
+    motion_heading_error,
 )
 
 SOURCES = [
@@ -67,28 +69,38 @@ def _sequence(profile: str):
             symmetry_bias=1.0,
         )
     )
-    reposition_frame = memory.break_until_frame + 1
-    rows.append(
-        GenericBattleTacticalPlanner.decide(
-            memory,
-            _obs(frame=reposition_frame, contact_count=1, damage_count=1, own_damage_event_count=1, surface_gap_m=2.5, **base),
-            symmetry_bias=1.0,
-        )
-    )
-    engage_frame = memory.reposition_until_frame + 1
-    rows.append(
-        GenericBattleTacticalPlanner.decide(
-            memory,
-            _obs(frame=engage_frame, contact_count=1, damage_count=1, own_damage_event_count=1, surface_gap_m=5.0, **base),
-            symmetry_bias=1.0,
-        )
-    )
+    after_timer_but_not_separated = memory.break_until_frame + 2
     rows.append(
         GenericBattleTacticalPlanner.decide(
             memory,
             _obs(
-                frame=engage_frame + 10, phase="COUNTERATTACK", story_tactic="COUNTER",
-                contact_count=1, damage_count=1, own_damage_event_count=1, surface_gap_m=4.0, **base,
+                frame=after_timer_but_not_separated,
+                contact_count=1, damage_count=1, own_damage_event_count=1,
+                surface_gap_m=max(0.05, memory.separation_required_m * 0.45), **base,
+            ),
+            symmetry_bias=1.0,
+        )
+    )
+    separation_frame = after_timer_but_not_separated + 3
+    rows.append(
+        GenericBattleTacticalPlanner.decide(
+            memory,
+            _obs(
+                frame=separation_frame,
+                contact_count=1, damage_count=1, own_damage_event_count=1,
+                surface_gap_m=memory.separation_required_m + 0.4, **base,
+            ),
+            symmetry_bias=1.0,
+        )
+    )
+    counter_frame = memory.reposition_until_frame + 1
+    rows.append(
+        GenericBattleTacticalPlanner.decide(
+            memory,
+            _obs(
+                frame=counter_frame, phase="COUNTERATTACK", story_tactic="COUNTER",
+                contact_count=1, damage_count=1, own_damage_event_count=1,
+                surface_gap_m=memory.separation_required_m + 0.6, **base,
             ),
             symmetry_bias=-1.0,
         )
@@ -105,10 +117,6 @@ def _static_scope() -> None:
             if token in lowered:
                 raise SystemExit(f"C460_ASSET_SPECIFIC_TOKEN_FORBIDDEN:{path.name}:{token}")
 
-    # Audit executable decision logic, not self-describing evidence keys such as
-    # exactCollisionFrameTarget=False. The policy module itself must contain none
-    # of the forbidden choreography vocabulary, and the Blender adapter must not
-    # read Story raw choreography payloads or trajectory fields.
     tactics = SOURCES[0].read_text(encoding="utf-8").lower()
     for token in FORBIDDEN_EXECUTABLE_CHOREOGRAPHY:
         if token in tactics:
@@ -149,23 +157,35 @@ def _static_scope() -> None:
 
 def main() -> None:
     _static_scope()
+
+    # Reverse navigation invariant: a goal directly behind the chassis must be a
+    # near-zero steering error while reversing, not a pi-radian turn request.
+    assert abs(motion_heading_error(math.pi - 0.01, "REVERSE")) < 0.02
+    assert abs(motion_heading_error(-math.pi + 0.01, "REVERSE")) < 0.02
+    assert abs(motion_heading_error(0.25, "ACCELERATE") - 0.25) < 1.0e-9
+
     sports_memory, sports = _sequence("sports")
     heavy_memory, heavy = _sequence("heavy")
+
     assert sports[0].mode == "ENGAGE"
     assert sports[1].mode == "BREAK_CONTACT" and sports[1].speed_intent == "REVERSE"
-    assert sports[2].mode == "REPOSITION"
+    assert sports[2].mode == "BREAK_CONTACT", "timer expiry must not bypass live separation"
+    assert sports[3].mode == "REPOSITION" and sports_memory.separation_achieved
     assert sports[4].mode == "COUNTER" and sports[4].contact_commit
+
     assert heavy[0].mode == "ENGAGE"
     assert heavy[1].mode == "BREAK_CONTACT" and heavy[1].speed_intent == "REVERSE"
-    assert heavy[2].mode == "REPOSITION"
+    assert heavy[2].mode == "BREAK_CONTACT"
+    assert heavy[3].mode == "REPOSITION" and heavy_memory.separation_achieved
     assert heavy[4].mode == "COUNTER"
-    assert heavy_memory.break_until_frame >= sports_memory.break_until_frame
+    assert heavy_memory.separation_required_m >= sports_memory.separation_required_m
 
     memory = TacticalMemory()
+    GenericBattleTacticalPlanner.decide(memory, _obs(), symmetry_bias=1.0)
     evasive = GenericBattleTacticalPlanner.decide(
         memory,
         _obs(
-            own_integrity=0.45, own_drive_efficiency=0.35,
+            frame=2, own_integrity=0.45, own_drive_efficiency=0.35,
             target_integrity=0.95, target_drive_efficiency=0.95, surface_gap_m=6.0,
         ),
         symmetry_bias=1.0,
@@ -173,9 +193,10 @@ def main() -> None:
     assert evasive.mode == "EVADE" and not evasive.contact_commit
 
     memory = TacticalMemory()
+    GenericBattleTacticalPlanner.decide(memory, _obs(), symmetry_bias=1.0)
     brake = GenericBattleTacticalPlanner.decide(
         memory,
-        _obs(surface_gap_m=0.8, closing_speed_mps=12.0, heading_error_rad=0.05),
+        _obs(frame=2, surface_gap_m=0.8, closing_speed_mps=12.0, heading_error_rad=0.05),
         symmetry_bias=1.0,
     )
     assert brake.mode == "BRAKE_APPROACH" and brake.speed_intent == "BRAKE"
@@ -187,6 +208,9 @@ def main() -> None:
                 "status": "PASS",
                 "sportsModes": [x.mode for x in sports],
                 "heavyModes": [x.mode for x in heavy],
+                "reverseMotionHeadingAware": True,
+                "geometryConfirmedSeparationBeforeReengagement": True,
+                "timerOnlyReengagementForbidden": True,
                 "heavyCapabilityDerivedBreakWindow": True,
                 "damageDisadvantageEvasion": "PASS",
                 "brakingDistanceAdaptation": "PASS",
