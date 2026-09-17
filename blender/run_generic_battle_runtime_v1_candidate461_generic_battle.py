@@ -16,11 +16,11 @@ from blender import run_generic_battle_runtime_v1_candidate43 as candidate43
 from blender import run_generic_battle_runtime_v1_candidate44 as candidate44
 from blender import run_generic_battle_runtime_v1_candidate446 as candidate446
 from blender import run_generic_battle_runtime_v1_candidate453_g08 as candidate453
-from blender.iss_battle_runtime_consequences_v2 import (
-    CONSEQUENCE_MODEL_V2,
-    DEBRIS_MODEL_V2,
-    VISUAL_RESPONSE_MODEL,
-    VisibleCausalConsequenceEngineV2,
+from blender.iss_battle_runtime_consequences_v3 import (
+    CONSEQUENCE_MODEL_V3,
+    DEBRIS_MODEL_V3,
+    VISUAL_RESPONSE_MODEL_V3,
+    VisibleCausalConsequenceEngineV3,
 )
 from blender.iss_battle_runtime_tactics_v3 import BATTLE_SIGNAL_SCOPE, TACTICAL_MODEL
 
@@ -58,17 +58,14 @@ def generic_battle_g06_outcome(states: dict[str, Any], events: dict[str, Any]) -
 
 def main() -> None:
     battle_v3.reset()
-
-    # G04 clean successor: tactical history is actor-scoped across semantic event
-    # boundaries while low-level autonomy/lifecycle counters remain event-local.
     candidate43._ORIGINAL_SET_CONTROLS = generic_battle_set_controls
-
-    # Evidence attachment only; G06 persistence and G07 outcome authority remain.
     candidate44._ORIGINAL_G06_OUTCOME = generic_battle_g06_outcome
 
-    # Preserve the physically-earned visible-consequence realization.
-    hardened.ConsequenceEngine = VisibleCausalConsequenceEngineV2
-    runtime.ConsequenceEngine = VisibleCausalConsequenceEngineV2
+    # Contact/damage admission remains owned by the preserved runtime. V3 only
+    # turns already-earned physical consequences into generic visible deformation
+    # and native rigid debris using realized recipient geometry.
+    hardened.ConsequenceEngine = VisibleCausalConsequenceEngineV3
+    runtime.ConsequenceEngine = VisibleCausalConsequenceEngineV3
 
     print(
         json.dumps(
@@ -82,19 +79,21 @@ def main() -> None:
                 "battleSignalScope": BATTLE_SIGNAL_SCOPE,
                 "autonomyStateScope": "CURRENT_EVENT_ONLY",
                 "contactAuthority": "RECIPROCAL_NATIVE_SOLVER_RESPONSE_V1",
-                "consequenceModel": CONSEQUENCE_MODEL_V2,
-                "visualResponseModel": VISUAL_RESPONSE_MODEL,
-                "debrisModel": DEBRIS_MODEL_V2,
+                "consequenceModel": CONSEQUENCE_MODEL_V3,
+                "visualResponseModel": VISUAL_RESPONSE_MODEL_V3,
+                "debrisModel": DEBRIS_MODEL_V3,
                 "sameRuntimeAcrossAssets": True,
                 "liveWorldStateDriven": True,
                 "actorProfileCapabilityDriven": True,
                 "actorScopedContinuousBattleMemory": True,
                 "unrelatedActorContactContamination": False,
                 "firstObservationHistoricalContactAware": True,
+                "payoffTerminatesRecovery": True,
                 "storyIntentOnly": True,
                 "nativeContactAuthorityPreserved": True,
                 "damageAdmissionThresholdChanged": False,
                 "contactThresholdChanged": False,
+                "debrisEligibilityUsesEarnedDamageConsequence": True,
                 "debrisTrajectoryInjection": False,
                 "perAssetBattleCode": False,
                 "perVideoTrajectoryEngineering": False,
