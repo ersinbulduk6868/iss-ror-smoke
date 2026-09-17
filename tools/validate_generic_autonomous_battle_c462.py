@@ -40,6 +40,7 @@ def _obs(**overrides):
         target_length_m=4.5, target_width_m=2.0, contact_count=0, damage_count=0,
         own_damage_event_count=0, target_damage_event_count=0, last_own_impact_frame=None,
         last_target_impact_frame=None,
+        damage_required=False, current_event_contact_count=0, current_event_damage_count=0,
     )
     row.update(overrides)
     return TacticalObservation(**row)
