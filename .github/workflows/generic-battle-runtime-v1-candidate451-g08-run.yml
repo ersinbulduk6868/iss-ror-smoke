@@ -1,0 +1,319 @@
+name: ISS Generic Battle Runtime v1 Candidate 4.5.1 G08 audited acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1]
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate451-g08-run.yml'
+      - 'blender/iss_battle_runtime_camera_g08.py'
+      - 'blender/iss_battle_runtime_camera_g08_v3.py'
+      - 'blender/run_generic_battle_runtime_v1_candidate451_g08.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate451_g08.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate451_g08_result.py'
+      - 'tools/build_g08_review_contact_sheet.py'
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-candidate451-g08-run
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  g08:
+    name: Candidate 4.5.1 G08 portrait full-bounds camera
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout audited G08 candidate
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Static scope and predecessor integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_camera_g08.py \
+            blender/iss_battle_runtime_camera_g08_v3.py \
+            blender/run_generic_battle_runtime_v1_candidate451_g08.py \
+            tools/validate_generic_battle_runtime_v1_candidate451_g08.py \
+            tools/validate_generic_battle_runtime_v1_candidate451_g08_result.py \
+            tools/build_g08_review_contact_sheet.py
+          python3 tools/validate_generic_battle_runtime_v1_candidate451_g08.py | tee candidate451-property.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE451_G08_PROPERTY_ACCEPTANCE"' candidate451-property.log
+          grep -q '"status": "PASS"' candidate451-property.log
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate40.py)" = '5fac710c646e4609d4b63d0ae23e8612f1c9c81d'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate43.py)" = 'e8b7172232186e7fc8f447b65ac146aacfd58b10'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate443.py)" = '358d34c437ee27d3115117f0aaa1139704277212'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate446.py)" = '0a09826e539b51aebf720e3d39b7a1ba9aee733b'
+          test "$(git hash-object blender/iss_battle_runtime_camera.py)" = '01aab5f4f6349b7223009085e87a20df4fa5f9fe'
+          test "$(git hash-object blender/iss_blender_battle_runtime_v1_hardened.py)" = 'a9694d22697e1de077415f1198d88df5fa07d00a'
+          test "$(git hash-object blender/iss_battle_runtime_camera_g08.py)" = '3aeeee0d222e5ba1c2f8661aee5607779ad2e524'
+          echo 'G08_C451_STATIC_SCOPE_AND_PREDECESSOR_INTEGRITY=PASS'
+
+      - name: Resolve and acquire exact Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          m=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not m: raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(m.group(1))
+          PY
+            )"
+          fi
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          assert d.get('service')=='iss-final-video-transfer-once', d
+          assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
+          a=d['asset']
+          assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
+          assert isinstance(a.get('signedUrl'), str) and a['signedUrl'].startswith('https://'), d
+          PY
+          BUGATTI_SOURCE_URL="$(python3 - <<'PY'
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          print(d['asset']['signedUrl'])
+          PY
+          )"
+          export BUGATTI_SOURCE_URL
+          echo "::add-mask::$BUGATTI_SOURCE_URL"
+          echo "BUGATTI_SOURCE_URL=$BUGATTI_SOURCE_URL" >> "$GITHUB_ENV"
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee candidate451-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' candidate451-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+
+      - name: Build accepted G07 fixtures and isolate G08 output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate446_g07.py --bugatti-primary "$BUGATTI_PRIMARY" | tee candidate451-fixtures.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_FIXTURES_PASS"' candidate451-fixtures.log
+          SRC=artifacts/generic-battle-runtime-v1-candidate446-g07
+          DST=artifacts/generic-battle-runtime-v1-candidate451-g08
+          mkdir -p "$DST/exact-bugatti" "$DST/generic-hypercar"
+          cp "$SRC/exact-bugatti/request.json" "$DST/exact-bugatti/request.json"
+          cp "$SRC/exact-bugatti/asset-map.json" "$DST/exact-bugatti/asset-map.json"
+          cp "$SRC/generic-hypercar/request.json" "$DST/generic-hypercar/request.json"
+          cp "$SRC/generic-hypercar/asset-map.json" "$DST/generic-hypercar/asset-map.json"
+          echo 'G08_C451_FIXTURES=PASS'
+
+      - name: Install exact Blender runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 python3-pil >/dev/null
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee candidate451-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" candidate451-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run exact Bugatti G08 machine runtime
+        timeout-minutes: 12
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate451-g08/exact-bugatti
+          echo 'G08_C451_EXACT_MACHINE_RUNTIME_BEGIN'
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate451_g08.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
+            2>&1 | tee candidate451-bugatti-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE451_G08_ENGINEERING_PASS' candidate451-bugatti-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate451-bugatti-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' candidate451-bugatti-runtime.log
+          grep -q 'G08_PORTRAIT_AUTOFRAME_EVIDENCE_WRITTEN' candidate451-bugatti-runtime.log
+          grep -q '"success": true' candidate451-bugatti-runtime.log
+          echo 'G08_C451_EXACT_MACHINE_RUNTIME_END=PASS'
+
+      - name: Run generic hypercar G08 machine runtime
+        timeout-minutes: 12
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate451-g08/generic-hypercar
+          echo 'G08_C451_GENERIC_MACHINE_RUNTIME_BEGIN'
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate451_g08.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
+            2>&1 | tee candidate451-generic-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE451_G08_ENGINEERING_PASS' candidate451-generic-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate451-generic-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' candidate451-generic-runtime.log
+          grep -q 'G08_PORTRAIT_AUTOFRAME_EVIDENCE_WRITTEN' candidate451-generic-runtime.log
+          grep -q '"success": true' candidate451-generic-runtime.log
+          echo 'G08_C451_GENERIC_MACHINE_RUNTIME_END=PASS'
+
+      - name: Strict G08 machine framing acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-battle-runtime-v1-candidate451-g08
+          python3 tools/validate_generic_battle_runtime_v1_candidate451_g08_result.py \
+            --bugatti-evidence "$ROOT/exact-bugatti/generic-battle-runtime-v1-evidence.json" \
+            --bugatti-drama "$ROOT/exact-bugatti/g07-causal-drama-evidence.json" \
+            --bugatti-camera "$ROOT/exact-bugatti/g08-camera-evidence.json" \
+            --generic-evidence "$ROOT/generic-hypercar/generic-battle-runtime-v1-evidence.json" \
+            --generic-drama "$ROOT/generic-hypercar/g07-causal-drama-evidence.json" \
+            --generic-camera "$ROOT/generic-hypercar/g08-camera-evidence.json" | tee candidate451-machine.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE451_G08_MACHINE_ACCEPTANCE"' candidate451-machine.log
+          grep -q '"status": "PASS"' candidate451-machine.log
+          grep -q '"machineFramingAcceptance": "PASS"' candidate451-machine.log
+          grep -q '"humanCinematicAcceptance": "PENDING"' candidate451-machine.log
+          grep -q '"gateClosed": false' candidate451-machine.log
+          echo 'ISS_G08_C451_MACHINE_FRAMING_ACCEPTANCE=PASS_HUMAN_REVIEW_PENDING'
+
+      - name: Prepare isolated low-cost human review fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-battle-runtime-v1-candidate451-g08
+          for NAME in exact-bugatti generic-hypercar; do
+            SRC="$ROOT/$NAME"
+            DST="$ROOT/review-$NAME"
+            mkdir -p "$DST"
+            cp "$SRC/request.json" "$DST/request.json"
+            cp "$SRC/asset-map.json" "$DST/asset-map.json"
+            python3 - "$DST/request.json" <<'PY'
+          import json,sys
+          p=sys.argv[1]
+          d=json.load(open(p, encoding='utf-8'))
+          render=d.setdefault('renderSpec', {})
+          render['aspectRatio']='9:16'
+          render['resolution']={'width':360,'height':640}
+          with open(p,'w',encoding='utf-8') as f:
+              json.dump(d,f,indent=2,sort_keys=True)
+          PY
+          done
+          echo 'G08_C451_HUMAN_REVIEW_FIXTURES_360X640=PASS'
+
+      - name: Render exact Bugatti G08 human review previews
+        timeout-minutes: 15
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate451-g08/review-exact-bugatti
+          echo 'G08_C451_EXACT_REVIEW_RENDER_BEGIN'
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate451_g08.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" --render-previews \
+            2>&1 | tee candidate451-bugatti-review-runtime.log
+          grep -q 'G08_PORTRAIT_AUTOFRAME_EVIDENCE_WRITTEN' candidate451-bugatti-review-runtime.log
+          grep -q '"success": true' candidate451-bugatti-review-runtime.log
+          echo 'G08_C451_EXACT_REVIEW_RENDER_END=PASS'
+
+      - name: Render generic hypercar G08 human review previews
+        timeout-minutes: 15
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate451-g08/review-generic-hypercar
+          echo 'G08_C451_GENERIC_REVIEW_RENDER_BEGIN'
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate451_g08.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" --render-previews \
+            2>&1 | tee candidate451-generic-review-runtime.log
+          grep -q 'G08_PORTRAIT_AUTOFRAME_EVIDENCE_WRITTEN' candidate451-generic-review-runtime.log
+          grep -q '"success": true' candidate451-generic-review-runtime.log
+          echo 'G08_C451_GENERIC_REVIEW_RENDER_END=PASS'
+
+      - name: Strict low-cost review evidence acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-battle-runtime-v1-candidate451-g08
+          python3 tools/validate_generic_battle_runtime_v1_candidate451_g08_result.py \
+            --bugatti-evidence "$ROOT/review-exact-bugatti/generic-battle-runtime-v1-evidence.json" \
+            --bugatti-drama "$ROOT/review-exact-bugatti/g07-causal-drama-evidence.json" \
+            --bugatti-camera "$ROOT/review-exact-bugatti/g08-camera-evidence.json" \
+            --generic-evidence "$ROOT/review-generic-hypercar/generic-battle-runtime-v1-evidence.json" \
+            --generic-drama "$ROOT/review-generic-hypercar/g07-causal-drama-evidence.json" \
+            --generic-camera "$ROOT/review-generic-hypercar/g08-camera-evidence.json" | tee candidate451-review-machine.log
+          grep -q '"status": "PASS"' candidate451-review-machine.log
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('artifacts/generic-battle-runtime-v1-candidate451-g08')
+          for name in ('review-exact-bugatti','review-generic-hypercar'):
+              d=json.loads((root/name/'g08-camera-evidence.json').read_text())
+              assert d['renderResolution']==[360,640], (name,d['renderResolution'])
+              assert d['fullBoundsReadabilityPass'] is True
+          PY
+          echo 'ISS_G08_C451_LOW_COST_REVIEW_EVIDENCE=PASS'
+
+      - name: Build human cinematic review sheet
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-battle-runtime-v1-candidate451-g08
+          python3 tools/build_g08_review_contact_sheet.py \
+            --bugatti-dir "$ROOT/review-exact-bugatti" \
+            --generic-dir "$ROOT/review-generic-hypercar" \
+            --output "$ROOT/g08-human-review-contact-sheet.jpg" | tee candidate451-contact-sheet.log
+          grep -q 'G08_REVIEW_CONTACT_SHEET=PASS' candidate451-contact-sheet.log
+
+      - name: Upload G08 Candidate 4.5.1 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate451-g08-${{ github.run_id }}
+          path: |
+            candidate451-property.log
+            candidate451-asset.log
+            candidate451-fixtures.log
+            candidate451-blender-version.log
+            candidate451-bugatti-runtime.log
+            candidate451-generic-runtime.log
+            candidate451-machine.log
+            candidate451-bugatti-review-runtime.log
+            candidate451-generic-review-runtime.log
+            candidate451-review-machine.log
+            candidate451-contact-sheet.log
+            artifacts/generic-battle-runtime-v1-candidate451-g08/
+            artifacts/visual-vnext-rc2-preflight/
+          if-no-files-found: warn
+          retention-days: 14
