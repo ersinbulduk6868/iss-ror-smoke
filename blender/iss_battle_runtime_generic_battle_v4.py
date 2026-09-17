@@ -122,6 +122,9 @@ def set_controls(
             target_width_m=max(0.25, target_width), contact_count=int(actor_contact_signal), damage_count=int(actor_damage_signal),
             own_damage_event_count=len(actor.state.damage_events), target_damage_event_count=int(target_damage_count),
             last_own_impact_frame=actor.state.last_impact_frame, last_target_impact_frame=target_last_impact,
+            damage_required=bool(event.damage_required),
+            current_event_contact_count=int(state.contact_count),
+            current_event_damage_count=int(state.damage_count),
         )
         tactical = GenericBattleTacticalPlanner.decide(
             tactical_memory, tactical_obs,
@@ -130,6 +133,15 @@ def set_controls(
 
         if target is not None:
             goal_point = control_v2._target_goal(actor, target, event, tactical, actors)
+            if tactical.mode == "REPOSITION" and bool(event.damage_required) and int(state.damage_count) <= 0 and int(state.contact_count) > 0:
+                delta = target.chassis.matrix_world.translation - position
+                delta.z = 0.0
+                if delta.length > 1.0e-8:
+                    away = -delta.normalized()
+                    failed_contacts = max(1, int(state.contact_count))
+                    geometry_scale = max(float(actor.dimensions.x), float(target.dimensions.x), 1.0)
+                    extra_runup = geometry_scale * min(1.40, 0.30 * failed_contacts)
+                    goal_point = goal_point + away * extra_runup
         else:
             fallback = runtime.resolve_target_point(actor, event, actors, frame, state)
             goal_point = fallback if fallback is not None else position + forward * max(3.0, float(actor.dimensions.x))
@@ -227,6 +239,9 @@ def set_controls(
                     "actorSignalContributingEvents": list(contributing_events),
                     "currentEventContactCount": int(state.contact_count),
                     "currentEventDamageCount": int(state.damage_count),
+                    "damageRequired": bool(event.damage_required),
+                    "damageIntentSatisfied": bool((not event.damage_required) or int(state.damage_count) > 0),
+                    "nonproductiveDamageContactCount": int(state.contact_count) if bool(event.damage_required) and int(state.damage_count) <= 0 else 0,
                     "ownDamageEventCount": len(actor.state.damage_events),
                 },
                 "policy": {
@@ -283,13 +298,15 @@ def write_evidence(output_dir: Path) -> Path:
         "actorPoseOrVelocityMutation": False,
         "reverseMotionHeadingAware": True,
         "geometryConfirmedSeparationBeforeReengagement": True,
+        "damageIntentAdaptiveRetry": True,
+        "damageRetryUsesCapabilityAndLiveGeometry": True,
         "gateClosed": False,
         "productionReadyClaimed": False,
     }
-    path = output_dir / "generic-autonomous-battle-v3-evidence.json"
+    path = output_dir / "generic-autonomous-battle-v4-evidence.json"
     path.write_text(json.dumps(evidence, indent=2, sort_keys=True), encoding="utf-8")
     marker(
-        "GENERIC_AUTONOMOUS_BATTLE_V3_EVIDENCE_WRITTEN",
+        "GENERIC_AUTONOMOUS_BATTLE_V4_EVIDENCE_WRITTEN",
         path=str(path), sampleCount=len(_tactical_samples), modeCount=len(mode_counts),
         actorCount=len(actors), model=BATTLE_CONTROL_MODEL,
     )
