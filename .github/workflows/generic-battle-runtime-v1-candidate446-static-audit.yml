@@ -1,0 +1,52 @@
+name: ISS Candidate 4.4.6 G07 zero-cost static audit
+
+on:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1-c446-audit]
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate446-static-audit.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate446.py'
+      - 'tools/build_generic_battle_runtime_v1_candidate446_g07.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate446.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate446_result.py'
+      - 'docs/ISS_G07_CANDIDATE446_SCOPE_PREFLIGHT.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Compile candidate and validators
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/run_generic_battle_runtime_v1_candidate446.py \
+            tools/build_generic_battle_runtime_v1_candidate446_g07.py \
+            tools/validate_generic_battle_runtime_v1_candidate446.py \
+            tools/validate_generic_battle_runtime_v1_candidate446_result.py
+      - name: Candidate 4.4.6 G07 property acceptance
+        run: |
+          set -euo pipefail
+          python3 tools/validate_generic_battle_runtime_v1_candidate446.py | tee candidate446-static.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_PROPERTY_ACCEPTANCE"' candidate446-static.log
+          grep -q '"status": "PASS"' candidate446-static.log
+          grep -q '"gateScope": "G07_CAUSAL_DRAMA_LIFECYCLE_ONLY"' candidate446-static.log
+          grep -q '"climaxRequiresNewContact": false' candidate446-static.log
+          grep -q '"g07OwnsDramaLifecycleOnly": true' candidate446-static.log
+          grep -q '"g04SourceMutationRequired": false' candidate446-static.log
+          grep -q '"g05SourceMutationRequired": false' candidate446-static.log
+          grep -q '"g06SourceMutationRequired": false' candidate446-static.log
+          grep -q '"gateClosed": false' candidate446-static.log
+      - name: Preserve G04 G05 G06 G443 sources
+        run: |
+          set -euo pipefail
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate40.py)" = '5fac710c646e4609d4b63d0ae23e8612f1c9c81d'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate43.py)" = 'e8b7172232186e7fc8f447b65ac146aacfd58b10'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate443.py)" = '358d34c437ee27d3115117f0aaa1139704277212'
+          echo 'G04_G05_G06_AND_C443_SOURCE_INTEGRITY=PASS'
