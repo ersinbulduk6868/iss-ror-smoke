@@ -23,7 +23,7 @@ SOURCES = [
     ROOT / "blender" / "run_generic_battle_runtime_v1_candidate460_generic_battle.py",
 ]
 FORBIDDEN_ASSET_TOKENS = ("bugatti", "bulldozer", "ferrari")
-FORBIDDEN_CHOREOGRAPHY = (
+FORBIDDEN_EXECUTABLE_CHOREOGRAPHY = (
     "collisionframe", "contactframe", "impactframe", "targetenergyj", "impactenergyj",
     "targetimpactspeedmps", "trajectorypoints", "pathpoints", "waypoints",
     "positionkeyframes", "velocitykeyframes", "steeringangle", "brakingpoint",
@@ -104,11 +104,30 @@ def _static_scope() -> None:
         for token in FORBIDDEN_ASSET_TOKENS:
             if token in lowered:
                 raise SystemExit(f"C460_ASSET_SPECIFIC_TOKEN_FORBIDDEN:{path.name}:{token}")
+
+    # Audit executable decision logic, not self-describing evidence keys such as
+    # exactCollisionFrameTarget=False. The policy module itself must contain none
+    # of the forbidden choreography vocabulary, and the Blender adapter must not
+    # read Story raw choreography payloads or trajectory fields.
     tactics = SOURCES[0].read_text(encoding="utf-8").lower()
-    adapter = SOURCES[1].read_text(encoding="utf-8").lower()
-    for token in FORBIDDEN_CHOREOGRAPHY:
-        if token in tactics or token in adapter:
+    for token in FORBIDDEN_EXECUTABLE_CHOREOGRAPHY:
+        if token in tactics:
             raise SystemExit(f"C460_EXECUTABLE_CHOREOGRAPHY_FORBIDDEN:{token}")
+    adapter = SOURCES[1].read_text(encoding="utf-8").lower()
+    for token in (
+        "event.original",
+        "physicsrequirements",
+        "trajectorypoints",
+        "pathpoints",
+        "waypoints",
+        "positionkeyframes",
+        "velocitykeyframes",
+        "targetimpactspeedmps",
+        "targetenergyj",
+    ):
+        if token in adapter:
+            raise SystemExit(f"C460_ADAPTER_STORY_CHOREOGRAPHY_READ_FORBIDDEN:{token}")
+
     consequences = SOURCES[2].read_text(encoding="utf-8")
     if "MIN_DAMAGE_SEVERITY" in consequences:
         raise SystemExit("C460_DAMAGE_ADMISSION_THRESHOLD_MUST_NOT_BE_OVERRIDDEN")
