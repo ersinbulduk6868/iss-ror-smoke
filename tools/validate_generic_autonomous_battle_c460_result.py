@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
+
+LOCALIZATION_MODEL = "VERIFIED_PAIR_NEAREST_RECIPIENT_MESH_VERTEX_V1"
 
 
 def _load(path: str):
@@ -41,7 +44,9 @@ def _validate(label: str, battle_path: str, g06_path: str, g07_path: str, g08_pa
     visible: list[tuple[str, dict]] = []
     debris = 0
     max_normalized_deformation = 0.0
+    max_localization_distance = 0.0
     damaged_actor_count = 0
+    localized_actor_ids: set[str] = set()
     for actor_id, row in actors.items():
         state = row.get("state") or {}
         visual = row.get("visual") or {}
@@ -56,8 +61,33 @@ def _validate(label: str, battle_path: str, g06_path: str, g07_path: str, g08_pa
                 max_normalized_deformation,
                 float(evidence.get("normalizedDeformation") or 0.0),
             )
+            assert evidence.get("contactLocalizationModel") == LOCALIZATION_MODEL, (
+                label,
+                "RECIPIENT_LOCALIZATION_MODEL_MISSING",
+                actor_id,
+                evidence,
+            )
+            assert evidence.get("g05ContactTruthRewritten") is False, (
+                label,
+                "G05_CONTACT_TRUTH_REWRITE_FORBIDDEN",
+                actor_id,
+            )
+            original = evidence.get("originalVerifiedContactPoint")
+            anchor = evidence.get("visualRecipientAnchorPoint")
+            assert isinstance(original, list) and len(original) == 3, (label, "ORIGINAL_CONTACT_POINT_MISSING", actor_id)
+            assert isinstance(anchor, list) and len(anchor) == 3, (label, "RECIPIENT_ANCHOR_MISSING", actor_id)
+            localization_distance = float(evidence.get("localizationDistanceM") or 0.0)
+            assert math.isfinite(localization_distance) and localization_distance >= 0.0, (
+                label,
+                "RECIPIENT_LOCALIZATION_DISTANCE_INVALID",
+                actor_id,
+                localization_distance,
+            )
+            max_localization_distance = max(max_localization_distance, localization_distance)
+            localized_actor_ids.add(str(actor_id))
     assert damaged_actor_count >= 2, (label, "TWO_SIDED_DAMAGE_NOT_PRESERVED", damaged_actor_count)
     assert visible, (label, "V2_VISIBLE_CONSEQUENCE_NOT_OBSERVED")
+    assert len(localized_actor_ids) >= 2, (label, "TWO_SIDED_RECIPIENT_LOCALIZATION_NOT_PROVEN", sorted(localized_actor_ids))
     assert max_normalized_deformation >= 0.02, (label, "VISIBLE_DEFORMATION_TOO_SMALL", max_normalized_deformation)
     assert debris >= 2, (label, "VISIBLE_DEBRIS_NOT_REALIZED", debris)
 
@@ -74,6 +104,9 @@ def _validate(label: str, battle_path: str, g06_path: str, g07_path: str, g08_pa
         "battleCycles": cycles,
         "directG05Impacts": len(direct),
         "visibleConsequenceEvents": len(visible),
+        "localizedActors": sorted(localized_actor_ids),
+        "contactLocalizationModel": LOCALIZATION_MODEL,
+        "maxLocalizationDistanceM": max_localization_distance,
         "debrisCount": debris,
         "maxNormalizedDeformation": max_normalized_deformation,
         "g07": "COMPLETE",
@@ -108,6 +141,8 @@ def main() -> None:
                 "sameRuntimeAcrossAssets": True,
                 "sportsAndHeavyPropertyAcceptance": "PASS",
                 "nativeContactAuthorityPreserved": True,
+                "recipientVisualLocalization": "PASS",
+                "g05ContactTruthRewritten": False,
                 "damageAdmissionThresholdChanged": False,
                 "contactThresholdChanged": False,
                 "continuousBattleCycle": "PASS",
