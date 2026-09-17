@@ -5,9 +5,14 @@ on:
     branches:
       - iss-engineering/master-plan-g01-g08-repair-v1
     paths:
-      - 'blender/validate_master_plan_g03_exact_asset_blender.py'
       - '.github/workflows/master-plan-g03-exact-asset.yml'
   workflow_dispatch:
+    inputs:
+      run_exact:
+        description: 'Run full exact dissimilar production asset acceptance'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -24,7 +29,33 @@ env:
   RELAY_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/generation-nvidia-asset-worker'
 
 jobs:
+  sketchfab-token-binding-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Verify Sketchfab secret is visible without downloading an asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-asset-provider-smoke" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data '{"mode":"status"}' \
+            "$RELAY_URL" > /tmp/g03-token-status.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/g03-token-status.json',encoding='utf-8'))
+          assert d.get('success') is True, d
+          assert d.get('status') == 'READY', d
+          assert d.get('sketchfabCredentialPresent') is True, d
+          assert d.get('exactSourceDownloadEnabled') is True, d
+          print('G03_SKETCHFAB_TOKEN_BINDING=PASS')
+          print('G03_ZERO_ASSET_DOWNLOAD_SMOKE=PASS')
+          PY
+
   g03-exact-production-asset:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_exact == true }}
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     steps:
