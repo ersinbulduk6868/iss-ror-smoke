@@ -22,7 +22,8 @@ Failure family:
 - new workflow missing from exact GitHub OIDC allowlist;
 - consumer coupled to mutable access-broker implementation version;
 - duplicate G08 workflows carrying independent copies of the same access logic, creating future drift risk;
-- push path filter initially ignored candidate/validator changes and therefore failed to rerun after a legitimate fix.
+- push path filter initially ignored candidate/validator changes and therefore failed to rerun after a legitimate fix;
+- GitHub Actions same-step environment propagation was initially mishandled: values appended to `$GITHUB_ENV` are available to later steps, not earlier commands in the same step.
 
 ## Locked upstream preservation
 The accepted upstream source remains immutable and is guarded by exact git object hashes in the authoritative G08 workflow:
@@ -73,9 +74,25 @@ Downstream evidence:
 - OIDC signature is verified against GitHub JWKS;
 - private Storage access is issued only after successful OIDC verification.
 
-The broker now exposes a stable additive contract field `contractVersion = iss-bugatti-pair-access-v1`. Acceptance must bind to this stable contract rather than the mutable broker implementation version. This avoids false failures when the broker version changes only to extend an allowlist or provenance metadata.
+The broker exposes a stable additive contract field `contractVersion = iss-bugatti-pair-access-v1`. Acceptance binds to this stable contract rather than the mutable broker implementation version. This avoids false failures when the broker version changes only to extend an allowlist or provenance metadata.
 
 `verify_jwt=false` remains intentional because the function performs its own GitHub OIDC authorization and the historical endpoint already used this custom-auth model. No authorization gate was weakened.
+
+## GitHub Actions environment-lifecycle audit extension
+The first post-audit run `35221798437` proved the stable broker contract and OIDC path were correct, but exposed one remaining orchestration defect before asset download: `BUGATTI_SOURCE_URL` was appended to `$GITHUB_ENV` and then consumed later in the same step. GitHub Actions only makes `$GITHUB_ENV` additions available to subsequent steps.
+
+Correct contract:
+- validate broker response in-process;
+- extract the signed URL into a shell variable;
+- `export BUGATTI_SOURCE_URL` for immediate same-step consumption by `visual_vnext_rc2_bugatti_duel_asset_preflight.py`;
+- also append it to `$GITHUB_ENV` only if a later step needs it.
+
+Adjacent handoffs were checked:
+- `BUGATTI_PRIMARY` is written to `$GITHUB_ENV` and consumed in the following fixture-build step: valid;
+- `BLENDER_BIN` is written to `$GITHUB_ENV` and consumed in later runtime steps: valid;
+- no other same-step `$GITHUB_ENV` consumer remains in the authoritative workflow.
+
+This run did not reach Blender and therefore does not alter the G08 camera-layer assessment.
 
 ## Duplicate workflow audit
 Three G08 workflow files existed:
@@ -83,13 +100,14 @@ Three G08 workflow files existed:
 - `generic-battle-runtime-v1-candidate450-g08.yml`
 - `generic-battle-runtime-v1-candidate450-g08-bootstrap.yml`
 
-Maintaining three copies creates configuration and access-contract drift. The clean audited state is one authoritative workflow: `generic-battle-runtime-v1-candidate450-g08-run.yml`, supporting both path-triggered push execution and manual `workflow_dispatch`. The two redundant workflows are removed before the next acceptance run.
+Maintaining three copies created configuration and access-contract drift. The clean audited state is one authoritative workflow: `generic-battle-runtime-v1-candidate450-g08-run.yml`, supporting both path-triggered push execution and manual `workflow_dispatch`. The two redundant workflows have been removed.
 
 ## Next-likely failures covered before retest
 The authoritative workflow must fail closed on:
 - OIDC access denial;
 - access `contractVersion` mismatch;
 - Bugatti SHA/size mismatch;
+- signed-URL same-step propagation failure;
 - Blender version mismatch;
 - predecessor source-hash drift;
 - fixture build failure;
@@ -103,6 +121,6 @@ The authoritative workflow must fail closed on:
 - missing mandatory human review sheet.
 
 ## Audit conclusion
-FULL AFFECTED-LAYER AUDIT = PASS FOR ONE CLEAN RETEST
+FULL AFFECTED-LAYER AUDIT = PASS FOR ONE CLEAN RUNTIME RETEST
 
-This audit does not claim G08 machine PASS, human cinematic PASS, gate closure, or production readiness. One clean authoritative acceptance run is required next. If machine acceptance passes, mandatory G08 scope post-flight and explicit user approval are still required before G08 can close.
+This audit does not claim G08 machine PASS, human cinematic PASS, gate closure, or production readiness. One clean authoritative runtime acceptance run is required next. If machine acceptance passes, mandatory G08 scope post-flight and explicit user approval are still required before G08 can close.
