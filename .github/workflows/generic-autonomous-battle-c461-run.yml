@@ -1,5 +1,6 @@
 name: ISS Generic Autonomous Battle Candidate 4.6.1 Cross-Gate Acceptance
 
+# Audited C461 snapshot trigger. Runtime/validator blobs are pinned again below.
 on:
   push:
     branches: [iss-engineering/generic-battle-runtime-v1]
@@ -45,6 +46,12 @@ jobs:
           grep -q '"status": "PASS"' c461-property.log
           grep -q '"priorEventDamageBaselined": true' c461-property.log
           grep -q '"eventScopedTacticalMemory": true' c461-property.log
+          grep -q '"geometryConfirmedSeparationBeforeReengagement": true' c461-property.log
+          test "$(git hash-object blender/iss_battle_runtime_tactics_v2.py)" = '1a5376b91c4bab7a554003ee93261c0208ffd487'
+          test "$(git hash-object blender/iss_battle_runtime_generic_battle_v2.py)" = 'f7de3d7413e701d9b065c70dc5882ad05c91a1df'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py)" = '2c30af7cf43c6e9c68e36bb2b54d3fed0e46b243'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c461.py)" = 'e7e0ac9b85a523c5386c88de1ff43ee7f7f7ec0a'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c461_result.py)" = '2c17a3fb7960e02bc2f0b9668722d42275c9b266'
           test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
           test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
           test "$(git hash-object blender/iss_battle_runtime_consequences.py)" = 'ff239d56b823e31046db9ad300932f82262cbb39'
