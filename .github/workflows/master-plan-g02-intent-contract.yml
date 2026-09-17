@@ -1,0 +1,52 @@
+name: ISS Master Plan G02 intent-only compiler acceptance
+
+on:
+  push:
+    branches:
+      - iss-engineering/master-plan-g01-g08-repair-v1
+    paths:
+      - 'blender/iss_battle_runtime_intent_contract_v2.py'
+      - 'tools/validate_master_plan_g02_intent_contract.py'
+      - '.github/workflows/master-plan-g02-intent-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  g02-intent-contract:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repair candidate
+        uses: actions/checkout@v4
+      - name: Python version
+        run: python3 --version
+      - name: Compile modules
+        run: python3 -m py_compile blender/iss_battle_runtime_contract.py blender/iss_battle_runtime_intent_contract_v2.py tools/validate_master_plan_g02_intent_contract.py
+      - name: G02 intent-only compiler acceptance
+        run: python3 tools/validate_master_plan_g02_intent_contract.py | tee g02-acceptance.json
+      - name: Verify PASS marker
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          row=json.loads(Path('g02-acceptance.json').read_text().strip().splitlines()[-1])
+          assert row['status']=='PASS'
+          assert row['gate']=='ISS-G02'
+          assert row['legacyPhysicsRequirementsExecutable'] is False
+          assert row['storyCollisionChoreography'] is False
+          assert row['actorOnlyPhysicalTarget'] is True
+          assert row['declarativeConsequenceIntentPreserved'] is True
+          assert row['runtimeOwnsCollisionRealization'] is True
+          assert row['poisonedLegacyFieldsNoEffect'] is True
+          assert row['directChoreographyFailsClosed'] is True
+          assert row['historicalLockedCandidatesModified'] is False
+          print('G02_MACHINE_ACCEPTANCE_PASS')
+          PY
+      - name: Upload G02 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: iss-master-plan-g02-intent-contract-${{ github.run_id }}
+          path: g02-acceptance.json
+          if-no-files-found: error
