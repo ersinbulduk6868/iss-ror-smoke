@@ -1,0 +1,47 @@
+name: ISS Generic Autonomous Battle Candidate 4.6.0 Property Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1]
+    paths:
+      - '.github/workflows/generic-autonomous-battle-c460-property.yml'
+      - 'blender/iss_battle_runtime_tactics_v2.py'
+      - 'blender/iss_battle_runtime_generic_battle_v2.py'
+      - 'blender/iss_battle_runtime_consequences_v2.py'
+      - 'blender/run_generic_battle_runtime_v1_candidate460_generic_battle.py'
+      - 'tools/validate_generic_autonomous_battle_c460.py'
+
+concurrency:
+  group: iss-generic-autonomous-battle-c460-property
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  property:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout candidate 4.6.0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Static syntax and generic battle property acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_tactics_v2.py \
+            blender/iss_battle_runtime_generic_battle_v2.py \
+            blender/iss_battle_runtime_consequences_v2.py \
+            blender/run_generic_battle_runtime_v1_candidate460_generic_battle.py \
+            tools/validate_generic_autonomous_battle_c460.py
+          python3 tools/validate_generic_autonomous_battle_c460.py | tee c460-property.log
+          grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C460_PROPERTY_ACCEPTANCE"' c460-property.log
+          grep -q '"status": "PASS"' c460-property.log
+          grep -q '"samePlannerAcrossProfiles": true' c460-property.log
+          grep -q '"heavyCapabilityDerivedBreakWindow": true' c460-property.log
+          grep -q '"nativeContactAuthorityPreserved": true' c460-property.log
+          grep -q '"damageAdmissionThresholdChanged": false' c460-property.log
+          grep -q '"perAssetBattleCode": false' c460-property.log
+          echo 'ISS_GENERIC_AUTONOMOUS_BATTLE_C460_PROPERTY_ACCEPTANCE=PASS'
