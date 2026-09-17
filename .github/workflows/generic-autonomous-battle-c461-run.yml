@@ -39,6 +39,7 @@ jobs:
             blender/iss_battle_runtime_tactics_v3.py \
             blender/iss_battle_runtime_generic_battle_v3.py \
             blender/iss_battle_runtime_consequences_v2.py \
+            blender/iss_battle_runtime_consequences_v3.py \
             blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py \
             tools/validate_generic_autonomous_battle_c461.py \
             tools/validate_generic_autonomous_battle_c461_result.py
@@ -51,12 +52,16 @@ jobs:
           grep -q '"contactWithoutDamageTriggersBattleCycle": true' c461-property.log
           grep -q '"autonomyCurrentEventCountersRemainEventScoped": true' c461-property.log
           grep -q '"geometryConfirmedSeparationBeforeReengagement": true' c461-property.log
-          test "$(git hash-object blender/iss_battle_runtime_tactics_v3.py)" = '72b9e1060d6a68beb11e5818ce2594cea3bb5c9b'
+          grep -q '"payoffTerminatesRecovery": true' c461-property.log
+          grep -q '"debrisEligibilityUsesEarnedDamageConsequence": true' c461-property.log
+          test "$(git hash-object blender/iss_battle_runtime_tactics_v3.py)" = '8f66e323b08e89321a418589117708d8fd67474c'
           test "$(git hash-object blender/iss_battle_runtime_generic_battle_v3.py)" = '646331f3066d496b3ef421495a12e66597a1cf54'
+          test "$(git hash-object blender/iss_battle_runtime_generic_battle_v2.py)" = 'f7de3d7413e701d9b065c70dc5882ad05c91a1df'
           test "$(git hash-object blender/iss_battle_runtime_consequences_v2.py)" = 'e011a10fee24802c13a1be22d66efe76c406c2c0'
-          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py)" = '300772bd60b1892ffb82b0080dd867c0db5a3ba6'
-          test "$(git hash-object tools/validate_generic_autonomous_battle_c461.py)" = '22f7c71e35117f192660008b31c0540d664fc266'
-          test "$(git hash-object tools/validate_generic_autonomous_battle_c461_result.py)" = '3ac8e5a46b42faf00e29fce96626a98f6a3e2f44'
+          test "$(git hash-object blender/iss_battle_runtime_consequences_v3.py)" = 'b13a06eb50884299e5a3d083897e1a70d75aad34'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py)" = 'f5f407c8b9bed0d4057c27533f98fcfb066db99c'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c461.py)" = '9c703627e95b04e783674033bb3c88665913cb3d'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c461_result.py)" = '627eeed959416412f7af1c38acb710a014a2b2a8'
           test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
           test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
           test "$(git hash-object blender/iss_battle_runtime_consequences.py)" = 'ff239d56b823e31046db9ad300932f82262cbb39'
@@ -160,7 +165,7 @@ jobs:
             2>&1 | tee c461-bugatti-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C461_ENGINEERING_READY' c461-bugatti-runtime.log
           grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' c461-bugatti-runtime.log
-          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_APPLIED' c461-bugatti-runtime.log
+          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_V3_APPLIED' c461-bugatti-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_V3_EVIDENCE_WRITTEN' c461-bugatti-runtime.log
           grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' c461-bugatti-runtime.log
           grep -q 'G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN' c461-bugatti-runtime.log
@@ -180,7 +185,7 @@ jobs:
             2>&1 | tee c461-generic-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C461_ENGINEERING_READY' c461-generic-runtime.log
           grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' c461-generic-runtime.log
-          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_APPLIED' c461-generic-runtime.log
+          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_V3_APPLIED' c461-generic-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_V3_EVIDENCE_WRITTEN' c461-generic-runtime.log
           grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' c461-generic-runtime.log
           grep -q 'G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN' c461-generic-runtime.log
@@ -205,8 +210,10 @@ jobs:
           grep -q '"actorScopedContinuousBattleMemory": true' c461-machine.log
           grep -q '"historicalContactObservedBeforeCurrentEventContact": true' c461-machine.log
           grep -q '"breakBeforeRepositionBeforeCounter": true' c461-machine.log
+          grep -q '"payoffTerminatesRecovery": true' c461-machine.log
           grep -q '"secondNativeContact": "PASS"' c461-machine.log
           grep -q '"visibleCausalDamageDebris": "PASS"' c461-machine.log
+          grep -q '"debrisEligibilityUsesEarnedDamageConsequence": true' c461-machine.log
           grep -q '"humanCinematicAcceptance": "PENDING"' c461-machine.log
           echo 'ISS_GENERIC_AUTONOMOUS_BATTLE_C461_MACHINE_ACCEPTANCE=PASS_HUMAN_REVIEW_PENDING'
 
@@ -223,6 +230,8 @@ jobs:
             'fullAffectedLayerAudit':'C460_FULL_AFFECTED_LAYER_AUDIT_20260917',
             'battleSignalScope':'ACTOR_INVOLVEMENT_EVENT_HISTORY_V1',
             'autonomyStateScope':'CURRENT_EVENT_ONLY',
+            'payoffTerminatesRecovery':True,
+            'debrisEligibilityUsesEarnedDamageConsequence':True,
             'headSha':os.environ.get('GITHUB_SHA'),
             'propertyAcceptance':'PASS',
             'machineAcceptance':'PASS_IF_MACHINE_STEP_SUCCEEDED',
