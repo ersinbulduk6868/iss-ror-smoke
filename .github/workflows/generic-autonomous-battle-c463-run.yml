@@ -219,7 +219,7 @@ jobs:
           set -euo pipefail
           D=artifacts/generic-autonomous-battle-c463/exact-bugatti
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
-            --python blender/run_generic_battle_runtime_v1_candidate462_generic_battle.py -- \
+            --python blender/run_generic_battle_runtime_v1_candidate463_generic_battle.py -- \
             --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
             2>&1 | tee c463-bugatti-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C463_ENGINEERING_READY' c463-bugatti-runtime.log
@@ -239,7 +239,7 @@ jobs:
           set -euo pipefail
           D=artifacts/generic-autonomous-battle-c463/generic-hypercar
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
-            --python blender/run_generic_battle_runtime_v1_candidate462_generic_battle.py -- \
+            --python blender/run_generic_battle_runtime_v1_candidate463_generic_battle.py -- \
             --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
             2>&1 | tee c463-generic-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C463_ENGINEERING_READY' c463-generic-runtime.log
