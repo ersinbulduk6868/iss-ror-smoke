@@ -105,7 +105,7 @@ def _sanitize_event(raw: dict[str, Any], event_id: str) -> tuple[dict[str, Any],
                 constraints[str(key)] = copy.deepcopy(value)
         if constraints:
             # Keep only non-choreographic, generic success constraints. The
-            # legacy BattleCompiler does not use these to steer motion/contact.
+            # established BattleCompiler does not use these to steer motion/contact.
             event["physicsRequirements"] = constraints
         provenance["ignoredLegacyChoreographyPaths"] = sorted(set(choreography_hits))
 
@@ -118,19 +118,26 @@ def _sanitize_event(raw: dict[str, Any], event_id: str) -> tuple[dict[str, Any],
         provenance["legacyAttackTarget"] = target_raw
         event["attackTarget"] = target_actor
 
-    # Damage may describe desired persistent consequence, but a Story-authored
-    # target/contact zone must not decide collision realization. We keep the
-    # consequence contract while moving the zone to non-executable provenance.
+    # Consequence intent is preserved declaratively while Story-authored contact
+    # zones are prevented from driving collision realization. G06 may still earn
+    # damage from actual native contact; nothing here lowers a damage threshold.
     damage = event.get("damage")
     if isinstance(damage, dict):
+        desired_consequence = {
+            "damageRequired": bool(damage.get("required")),
+            "persistent": bool(damage.get("persistent", damage.get("required", False))),
+            "stateChanges": copy.deepcopy(damage.get("stateChanges") or []),
+        }
         for key in ("zone", "targetZone"):
             if key in damage and str(damage.get(key) or "").strip():
                 provenance.setdefault("legacyDamageTarget", {})[key] = copy.deepcopy(damage[key])
                 damage.pop(key, None)
-        # The legacy compiler requires a zone when damage.required=true. That
-        # requirement belongs to the old execution contract, so the new intent
-        # compiler treats Story damage as desired consequence metadata and lets
-        # G06 earn damage from actual native contact instead of scripting it.
+        if desired_consequence["damageRequired"] or desired_consequence["stateChanges"]:
+            event["intentConsequences"] = desired_consequence
+        # The legacy compiler requires a zone when damage.required=true. In the
+        # intent-only contract, desired consequence is not permission to script a
+        # collision zone, so runtime-event damage gating is neutralized while the
+        # requirement remains preserved above as a declarative goal.
         if bool(damage.get("required")):
             provenance["legacyDamageRequired"] = True
             damage["required"] = False
@@ -223,6 +230,7 @@ def program_intent_signature(program: BattleProgram) -> dict[str, Any]:
                 "speedIntent": event.speed_intent,
                 "dependencies": list(event.dependencies),
                 "requiresContact": event.requires_contact,
+                "intentConsequences": copy.deepcopy(event.original.get("intentConsequences") or {}),
             }
             for event in program.events
         ],
