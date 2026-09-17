@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import bpy
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -11,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
 from blender import iss_blender_battle_runtime_v1 as runtime
 from blender import iss_blender_battle_runtime_v1_hardened as hardened
 from blender import run_generic_battle_runtime_v1_candidate446 as candidate446
+from blender.iss_battle_runtime_assets import BlenderBattleRuntimeError, marker
 from blender.iss_battle_runtime_camera_g08_v3 import (
     AUTOFRAME_MODEL,
     EventDrivenCinematicCameraDirectorV3,
@@ -19,6 +22,8 @@ from blender.iss_battle_runtime_camera_g08 import CAMERA_G08_MODEL
 
 CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_5_1_G08"
 DEFAULT_SHORTS_RESOLUTION = (540, 960)
+REVIEW_RENDER_SAMPLES = 8
+REVIEW_RENDER_PROFILE = "G08_HUMAN_REVIEW_EEVEE_LOW_COST_V1"
 
 
 def _is_valid_vertical_9x16(width: int, height: int) -> bool:
@@ -27,12 +32,33 @@ def _is_valid_vertical_9x16(width: int, height: int) -> bool:
     return abs((float(width) / float(height)) - (9.0 / 16.0)) <= 0.01
 
 
+def _apply_review_render_profile() -> None:
+    """Reduce only human-review sampling cost; never alter camera or physics."""
+    scene = bpy.context.scene
+    eevee = getattr(scene, "eevee", None)
+    if eevee is None or not hasattr(eevee, "taa_render_samples"):
+        raise BlenderBattleRuntimeError("G08_REVIEW_EEVEE_SAMPLING_API_UNAVAILABLE")
+    eevee.taa_render_samples = REVIEW_RENDER_SAMPLES
+    marker(
+        "G08_REVIEW_RENDER_PROFILE_APPLIED",
+        profile=REVIEW_RENDER_PROFILE,
+        engine=str(scene.render.engine),
+        renderSamples=int(eevee.taa_render_samples),
+        resolution=[int(scene.render.resolution_x), int(scene.render.resolution_y)],
+        cameraStateChanged=False,
+        actorPoseOrVelocityMutation=False,
+        physicsMutation=False,
+        productionRenderProfileChanged=False,
+    )
+
+
 def g08_setup_world(request, program, _base_setup_world=runtime.setup_world) -> None:
     """Enforce G08 portrait presentation without touching battle physics.
 
     Valid lower-resolution 9:16 presentation requests are preserved for review
     rendering. Landscape or invalid upstream presentation is normalized to the
-    canonical G08 machine target.
+    canonical G08 machine target. Review-only sample reduction is applied only
+    when the already-existing --render-previews mode is active.
     """
     render = request.setdefault("renderSpec", {})
     resolution = render.get("resolution") or {}
@@ -43,6 +69,8 @@ def g08_setup_world(request, program, _base_setup_world=runtime.setup_world) -> 
     render["aspectRatio"] = "9:16"
     render["resolution"] = {"width": width, "height": height}
     _base_setup_world(request, program)
+    if hardened._capture_enabled:
+        _apply_review_render_profile()
 
 
 def main() -> None:
@@ -67,6 +95,10 @@ def main() -> None:
                 "portraitFullBoundsAutoFraming": True,
                 "phaseAwareShotGrammar": True,
                 "machineFramingAcceptanceSeparateFromHumanReview": True,
+                "reviewRenderProfile": REVIEW_RENDER_PROFILE,
+                "reviewRenderSamples": REVIEW_RENDER_SAMPLES,
+                "reviewRenderOnly": True,
+                "productionRenderProfileChanged": False,
                 "g04ControlLawChanged": False,
                 "g05ContactAuthorityChanged": False,
                 "g06DamagePersistenceChanged": False,
