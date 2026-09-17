@@ -1,0 +1,136 @@
+name: ISS Master Plan G03 exact production asset acceptance
+
+on:
+  push:
+    branches:
+      - iss-engineering/master-plan-g01-g08-repair-v1
+    paths:
+      - 'blender/validate_master_plan_g03_exact_asset_blender.py'
+      - '.github/workflows/master-plan-g03-exact-asset.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: iss-master-plan-g03-exact-asset
+  cancel-in-progress: false
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_SHA: '2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468'
+  SOURCE_UID: 'b06a715d23a7450babac383b8bb7fb0a'
+  RELAY_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/generation-nvidia-asset-worker'
+
+jobs:
+  g03-exact-production-asset:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repair candidate
+        uses: actions/checkout@v4
+
+      - name: Resolve exact source with scoped GitHub OIDC
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/g03-exact
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-asset-provider-smoke" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $OIDC" \
+            -H 'Content-Type: application/json' \
+            --data "{\"mode\":\"signed_source_download\",\"uid\":\"$SOURCE_UID\"}" \
+            "$RELAY_URL" > artifacts/g03-exact/source-access.json
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('artifacts/g03-exact/source-access.json',encoding='utf-8'))
+          assert d.get('success') is True and d.get('status')=='SIGNED_SOURCE_READY', d
+          s=d['source']
+          assert s['uid']==os.environ['SOURCE_UID']
+          assert s['expectedSourceSha256']==os.environ['EXPECTED_SHA']
+          assert s['provider']=='sketchfab'
+          assert s['artifactKind']=='glb', s
+          assert str(s['signedUrl']).startswith('https://')
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('EXACT_SOURCE_URL='+s['signedUrl']+'\n')
+          print('G03_EXACT_SOURCE_ACCESS=PASS')
+          PY
+
+      - name: Download and verify exact full source
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --retry 3 --retry-all-errors "$EXACT_SOURCE_URL" -o artifacts/g03-exact/production-bulldozer.glb
+          ACTUAL_SHA="$(sha256sum artifacts/g03-exact/production-bulldozer.glb | awk '{print $1}')"
+          ACTUAL_BYTES="$(stat -c '%s' artifacts/g03-exact/production-bulldozer.glb)"
+          echo "actualSha=$ACTUAL_SHA bytes=$ACTUAL_BYTES"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+          test "$ACTUAL_BYTES" -gt 1000000
+          echo 'G03_EXACT_FULL_SOURCE_SHA=PASS'
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee artifacts/g03-exact/blender-version.txt
+          grep -F "Blender ${BLENDER_VERSION}" artifacts/g03-exact/blender-version.txt
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run same generic Blender onboarding on exact dissimilar production asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/validate_master_plan_g03_exact_asset_blender.py -- \
+            --asset artifacts/g03-exact/production-bulldozer.glb \
+            --source-sha "$EXPECTED_SHA" \
+            --result artifacts/g03-exact/g03-exact-result.json \
+            2>&1 | tee artifacts/g03-exact/blender-onboarding.log
+          grep -F 'ISS_G03_EXACT_ASSET_ONBOARDING_PASS' artifacts/g03-exact/blender-onboarding.log
+
+      - name: Strict G03 exact acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os
+          d=json.load(open('artifacts/g03-exact/g03-exact-result.json',encoding='utf-8'))
+          assert d['status']=='PASS'
+          assert d['gate']=='ISS-G03'
+          assert d['sourceSha256']==os.environ['EXPECTED_SHA']
+          assert d['acceptance']=='FULL_EXACT_DISSIMILAR_PRODUCTION_SOURCE_GENERIC_BLENDER_ONBOARDING'
+          assert d['sameGenericAdapterSource']=='blender/iss_battle_runtime_assets.py'
+          assert d['assetSpecificBattleSourceCode'] is False
+          assert d['fixtureNameBranchRequired'] is False
+          assert float(d['massKg'])>20000
+          assert int(d['visibleMeshCount'])>0
+          assert d['productionReadyClaimedBeyondG03'] is False
+          print('ISS_G03_MACHINE_ACCEPTANCE=PASS')
+          PY
+
+      - name: Upload G03 exact evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iss-master-plan-g03-exact-production-asset-${{ github.run_id }}
+          path: |
+            artifacts/g03-exact/source-access.json
+            artifacts/g03-exact/blender-version.txt
+            artifacts/g03-exact/blender-onboarding.log
+            artifacts/g03-exact/g03-exact-result.json
+          if-no-files-found: warn
+          retention-days: 14
