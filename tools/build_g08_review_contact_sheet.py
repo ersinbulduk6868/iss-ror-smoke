@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import PIL
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 LABELS = (
@@ -16,6 +17,13 @@ LABELS = (
     "aftermath",
 )
 
+try:
+    RESAMPLE_LANCZOS = Image.Resampling.LANCZOS
+    RESAMPLE_API = "Image.Resampling.LANCZOS"
+except AttributeError:
+    RESAMPLE_LANCZOS = Image.LANCZOS
+    RESAMPLE_API = "Image.LANCZOS"
+
 
 def find_image(directory: Path, label: str) -> Path | None:
     matches = sorted(directory.glob(f"preview-{label}-f*.png"))
@@ -25,7 +33,7 @@ def find_image(directory: Path, label: str) -> Path | None:
 
 
 def fit(image: Image.Image, size: tuple[int, int]) -> Image.Image:
-    return ImageOps.fit(image.convert("RGB"), size, method=Image.Resampling.LANCZOS)
+    return ImageOps.fit(image.convert("RGB"), size, method=RESAMPLE_LANCZOS)
 
 
 def main() -> None:
@@ -34,6 +42,8 @@ def main() -> None:
     parser.add_argument("--generic-dir", required=True)
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
+
+    print(f"G08_CONTACT_SHEET_PILLOW={PIL.__version__}:RESAMPLE_API={RESAMPLE_API}")
 
     sources = [
         ("Exact Bugatti", Path(args.bugatti_dir)),
