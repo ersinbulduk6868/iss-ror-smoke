@@ -1,0 +1,21 @@
+name: Master Plan G03 Generic Asset Adapter Audit
+
+on:
+  push:
+    branches:
+      - iss-audit/master-plan-g01-g06-retrospective
+    paths:
+      - tools/validate_master_plan_g03_generic_asset_adapter.py
+
+permissions:
+  contents: read
+
+jobs:
+  g03-generic-asset-adapter:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact audit branch
+        uses: actions/checkout@v4
+      - name: Run G03 generic adapter/support-boundary acceptance
+        run: python3 tools/validate_master_plan_g03_generic_asset_adapter.py
