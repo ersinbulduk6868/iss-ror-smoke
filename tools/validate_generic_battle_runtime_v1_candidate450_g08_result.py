@@ -69,8 +69,7 @@ def camera_pass(data: dict[str, Any], name: str) -> dict[str, Any]:
     shots = data.get("shots") or []
     require(isinstance(shots, list) and shots, f"G08_{name}_SHOTS_MISSING")
     for row in shots:
-        if not isinstance(row, dict):
-            raise SystemExit(f"G08_{name}_SHOT_ROW_INVALID")
+        require(isinstance(row, dict), f"G08_{name}_SHOT_ROW_INVALID")
         require(row.get("actorPoseOrVelocityMutation") is False, f"G08_{name}_SHOT_ACTOR_MUTATION")
         require(row.get("physicsMutation") is False, f"G08_{name}_SHOT_PHYSICS_MUTATION")
         require(row.get("perAssetCameraBranch") is False, f"G08_{name}_SHOT_ASSET_BRANCH")
@@ -89,13 +88,21 @@ def camera_pass(data: dict[str, Any], name: str) -> dict[str, Any]:
 
 def base_pass(data: dict[str, Any], name: str) -> dict[str, Any]:
     require(data.get("success") is True, f"G08_{name}_BASE_RUNTIME_NOT_SUCCESS")
-    require(int(data.get("impactCount") or 0) >= 1, f"G08_{name}_BASE_IMPACT_MISSING")
-    require(int(data.get("actorCount") or 0) >= 2, f"G08_{name}_BASE_ACTOR_COUNT_INVALID")
+    program = data.get("program") or {}
+    impacts = data.get("impacts") or []
+    require(isinstance(program, dict), f"G08_{name}_BASE_PROGRAM_INVALID")
+    require(isinstance(impacts, list), f"G08_{name}_BASE_IMPACTS_INVALID")
+    actor_count = int(program.get("actorCount") or 0)
+    event_count = int(program.get("eventCount") or 0)
+    impact_count = len(impacts)
+    require(impact_count >= 1, f"G08_{name}_BASE_IMPACT_MISSING")
+    require(actor_count >= 2, f"G08_{name}_BASE_ACTOR_COUNT_INVALID")
+    require(event_count >= 1, f"G08_{name}_BASE_EVENT_COUNT_INVALID")
     return {
         "success": True,
-        "actorCount": int(data.get("actorCount") or 0),
-        "impactCount": int(data.get("impactCount") or 0),
-        "eventCount": int(data.get("eventCount") or 0),
+        "actorCount": actor_count,
+        "impactCount": impact_count,
+        "eventCount": event_count,
     }
 
 
@@ -115,11 +122,7 @@ def main() -> None:
     generic_drama = drama_complete(load(args.generic_drama), "GENERIC")
     bugatti_camera = camera_pass(load(args.bugatti_camera), "BUGATTI")
     generic_camera = camera_pass(load(args.generic_camera), "GENERIC")
-
-    require(
-        bugatti_camera["model"] == generic_camera["model"],
-        "G08_CAMERA_MODEL_DIFFERS_ACROSS_ASSETS",
-    )
+    require(bugatti_camera["model"] == generic_camera["model"], "G08_CAMERA_MODEL_DIFFERS_ACROSS_ASSETS")
 
     print(json.dumps({
         "marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE450_G08_MACHINE_ACCEPTANCE",
