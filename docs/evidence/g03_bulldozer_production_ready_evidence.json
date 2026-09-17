@@ -1,0 +1,53 @@
+{
+  "evidenceClass": "SUPABASE_ENGINEERING_VERIFIED_PRODUCTION_ASSET_V1",
+  "capturedForGate": "ISS-G03",
+  "capturedAt": "2026-09-17",
+  "sourceAsset": {
+    "id": "3541d714-a246-41c6-8ee9-3f25d1a25707",
+    "provider": "sketchfab",
+    "sourceUid": "b06a715d23a7450babac383b8bb7fb0a",
+    "assetName": "Bulldozer Candidate 1",
+    "category": "bulldozer",
+    "subcategory": "heavy_tracked_machine",
+    "sourceSha256": "2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468",
+    "originalStorageUri": "gs://iss-nvidia-260825114007-outputs/asset-library/v1/source/sketchfab/b06a715d23a7450babac383b8bb7fb0a/original/visual_master.glb",
+    "licenseCode": "CC_BY_4_0",
+    "commercialUseAllowed": true,
+    "modificationAllowed": true,
+    "humanApproved": true,
+    "status": "SOURCE_APPROVED",
+    "meshCount": 441,
+    "nodeCount": 904,
+    "vertexCount": 128639,
+    "triangleCount": 111483,
+    "materialCount": 14,
+    "maxExtentM": 6.11527,
+    "semanticParts": ["blade", "cab", "chassis", "exhaust", "glass", "hydraulic", "push_arm", "roller", "track"],
+    "durableSourceUpload": "PASS",
+    "exactLicenseEvidenceGate": "PASS"
+  },
+  "readyAsset": {
+    "id": "2153aaa0-b922-40a6-a340-e286807bc44b",
+    "status": "PRODUCTION_READY",
+    "readyStorageUri": "gs://iss-nvidia-260825114007-outputs/asset-library/v1/ready/sketchfab/b06a715d23a7450babac383b8bb7fb0a/iss-asset-compat-v1-r1/output/master_asset_rc2_dynamic.usda",
+    "readySha256": "b2399a2e1b6944faefb458a6408adc385fe0f4376b125ae8f0a6b859adbcc623",
+    "sourceSha256Snapshot": "2c0be359bbc6c99118751e7caa4b71a205961914e78d2e58c5dd7afc0f498468",
+    "totalMassKg": 27614.189525707065,
+    "rigidBodyCount": 5,
+    "structuralJointCount": 4,
+    "collisionShapeCount": 13,
+    "majorSemanticBodies": ["chassis", "cab", "blade", "track_left", "track_right"],
+    "humanVisualQa": "PASS",
+    "dynamicPhysics": "RC2_REAL_L4_PASS",
+    "realNvidiaL4Acceptance": true,
+    "generationAssetLoadPass": true
+  },
+  "g03Interpretation": {
+    "dissimilarRealProductionAssetExists": true,
+    "licenseAndSourceProvenanceVerified": true,
+    "productionReadyPhysicalProfileExists": true,
+    "sameCurrentBlenderGenericOnboardingFullSourceImportProven": false,
+    "reasonNotProven": "Exact production source is stored in GCS; current session has no verified zero-cost authorized fetch path for that object. R031 forbids silently initiating potentially billable GCS transfer.",
+    "gateClosureAllowedFromThisEvidenceAlone": false
+  }
+}
