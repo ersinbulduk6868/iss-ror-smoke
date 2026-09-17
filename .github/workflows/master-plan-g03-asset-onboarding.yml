@@ -1,0 +1,52 @@
+name: ISS Master Plan G03 generic asset onboarding support-boundary acceptance
+
+on:
+  push:
+    branches:
+      - iss-engineering/master-plan-g01-g08-repair-v1
+    paths:
+      - 'blender/iss_battle_runtime_contract.py'
+      - 'blender/iss_battle_runtime_assets.py'
+      - 'assets/test-real-model/bulldozer_quant120.json'
+      - 'docs/evidence/g03_bulldozer_production_ready_evidence.json'
+      - 'tools/validate_master_plan_g03_asset_onboarding.py'
+      - '.github/workflows/master-plan-g03-asset-onboarding.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  g03-support-boundary:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repair candidate
+        uses: actions/checkout@v4
+      - name: Compile pure-Python contract and validator
+        run: python3 -m py_compile blender/iss_battle_runtime_contract.py tools/validate_master_plan_g03_asset_onboarding.py
+      - name: G03 support-boundary acceptance
+        run: python3 tools/validate_master_plan_g03_asset_onboarding.py | tee g03-acceptance.json
+      - name: Verify bounded PASS without overclaim
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          row=json.loads(Path('g03-acceptance.json').read_text().strip().splitlines()[-1])
+          assert row['status']=='PASS_SUPPORT_BOUNDARY_PARTIAL'
+          assert row['gate']=='ISS-G03'
+          assert row['genericActorProfileSameCodeAcrossClasses'] is True
+          assert row['genericAdapterAssetNameBranches'] is False
+          assert row['unsupportedOrInvalidProfileFailsClosed'] is True
+          assert row['genericSemanticDerivationPresent'] is True
+          assert row['dissimilarRealProductionAssetExists'] is True
+          assert row['fullExactProductionBulldozerCurrentBlenderImport'] is False
+          assert row['gateMachineClosureReady'] is False
+          print('G03_SUPPORT_BOUNDARY_ACCEPTANCE=PASS_PARTIAL_NO_OVERCLAIM')
+          PY
+      - name: Upload G03 evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: iss-master-plan-g03-support-boundary-${{ github.run_id }}
+          path: g03-acceptance.json
+          if-no-files-found: error
