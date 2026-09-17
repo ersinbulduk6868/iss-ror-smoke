@@ -29,14 +29,7 @@ def actor_realized_event_signals(
     events: Iterable[Any],
     states: dict[str, Any],
 ) -> tuple[int, int, tuple[str, ...]]:
-    """Return monotonic contact/damage signals for events involving one actor.
-
-    The counters are deliberately *signals*, not unique physical-transaction
-    counts: reciprocal story intents may each inherit one verified physical
-    transaction. The tactical planner only needs to know whether the actor's
-    realized battle history advanced. Events involving only other actors are
-    excluded so multi-actor battles cannot contaminate this actor's memory.
-    """
+    """Return monotonic contact/damage signals for events involving one actor."""
     entity = str(actor_id)
     contact_signal = 0
     damage_signal = 0
@@ -180,6 +173,14 @@ class GenericBattleTacticalPlanner:
         return clamp((0.45 + 0.35 * drive + 0.20 * integrity) * (0.85 + 0.20 * braking_ratio), 0.20, 1.0)
 
     @staticmethod
+    def _settle(memory: TacticalMemory) -> None:
+        memory.break_until_frame = 0
+        memory.reposition_until_frame = 0
+        memory.reposition_duration_frames = 0
+        memory.separation_required_m = 0.0
+        memory.separation_achieved = True
+
+    @staticmethod
     def decide(
         memory: TacticalMemory,
         obs: TacticalObservation,
@@ -191,10 +192,6 @@ class GenericBattleTacticalPlanner:
         bias = 1.0 if symmetry_bias >= 0.0 else -1.0
         memory.flank_bias = bias
 
-        # V3 intentionally does not baseline away already-realized actor history.
-        # A target can receive a verified contact before it later becomes the
-        # attacker of a counter-event, so its first tactical observation must
-        # still react to that prior physical fact.
         if not memory.initialized:
             new_contact = int(obs.contact_count) > 0
             new_damage = int(obs.damage_count) > 0
@@ -215,6 +212,13 @@ class GenericBattleTacticalPlanner:
         if obs.own_disabled:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "DISABLED", "ACTOR_DISABLED")
             return TacticalGoal("DISABLED", memory.reason, "COAST", 0.0, 0.0, 0.0, False, 0.0, transition, memory.cycle)
+
+        # Terminal story intent is lifecycle-authoritative. Historical contact or
+        # an unfinished recovery may not keep moving an actor through PAYOFF.
+        if story in {"HOLD", "SETTLE"} or phase == "PAYOFF":
+            GenericBattleTacticalPlanner._settle(memory)
+            transition = GenericBattleTacticalPlanner._set_mode(memory, "HOLD", "STORY_HIGH_LEVEL_HOLD") or transition
+            return TacticalGoal("HOLD", memory.reason, "BRAKE", 0.0, 0.0, 0.0, False, 1.0, transition, memory.cycle)
 
         if new_contact or own_new_damage or new_damage:
             reverse_frames, turn_frames = GenericBattleTacticalPlanner._break_frames(obs)
@@ -244,10 +248,6 @@ class GenericBattleTacticalPlanner:
                 "REPOSITION", memory.reason, "ACCELERATE", clamp(base_scale * 0.52, 0.18, 0.68),
                 -0.30, bias * 1.05, False, 0.0, transition, memory.cycle,
             )
-
-        if story in {"HOLD", "SETTLE"} or phase == "PAYOFF":
-            transition = GenericBattleTacticalPlanner._set_mode(memory, "HOLD", "STORY_HIGH_LEVEL_HOLD") or transition
-            return TacticalGoal("HOLD", memory.reason, "BRAKE", 0.0, 0.0, 0.0, False, 1.0, transition, memory.cycle)
 
         if story in {"EVADE", "REGROUP", "REVERSE"}:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "EVADE", "STORY_HIGH_LEVEL_EVASION") or transition
