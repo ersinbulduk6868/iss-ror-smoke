@@ -11,7 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from blender import iss_blender_battle_runtime_v1 as runtime
 from blender import iss_blender_battle_runtime_v1_hardened as hardened
-from blender import iss_battle_runtime_generic_battle_v2 as battle_v2
+from blender import iss_battle_runtime_generic_battle_v3 as battle_v3
 from blender import run_generic_battle_runtime_v1_candidate43 as candidate43
 from blender import run_generic_battle_runtime_v1_candidate44 as candidate44
 from blender import run_generic_battle_runtime_v1_candidate446 as candidate446
@@ -22,54 +22,13 @@ from blender.iss_battle_runtime_consequences_v2 import (
     VISUAL_RESPONSE_MODEL,
     VisibleCausalConsequenceEngineV2,
 )
-from blender.iss_battle_runtime_tactics_v2 import TACTICAL_MODEL
+from blender.iss_battle_runtime_tactics_v3 import BATTLE_SIGNAL_SCOPE, TACTICAL_MODEL
 
 CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_6_1_GENERIC_AUTONOMOUS_BATTLE"
-MECHANISM = "ISS_GENERIC_AUTONOMOUS_BATTLE_MECHANISM_V2"
-EVENT_LIFECYCLE_MODEL = "ISS_EVENT_SCOPED_TACTICAL_MEMORY_V1"
+MECHANISM = "ISS_GENERIC_AUTONOMOUS_BATTLE_MECHANISM_V3"
+AUDIT = "C460_FULL_AFFECTED_LAYER_AUDIT_20260917"
 
 _ORIGINAL_G06_OUTCOME = candidate44._ORIGINAL_G06_OUTCOME
-_last_event_by_actor: dict[str, str | None] = {}
-
-
-def _enforce_event_scoped_tactical_memory(
-    frame: int,
-    program: Any,
-    actors: dict[str, Any],
-    states: dict[str, Any],
-) -> None:
-    """Reset only tactical decision memory when an actor enters a new story event.
-
-    Persistent physical actor state (damage, velocity, geometry, debris, G05 receipts)
-    is deliberately untouched. The new TacticalMemory then baselines those persistent
-    values, so prior-event damage cannot masquerade as a new impact.
-    """
-    for entity in actors:
-        event = candidate446.g07_v7_active_goal_for_actor(entity, frame, program, states)
-        event_id = str(event.event_id) if event is not None else None
-        previous = _last_event_by_actor.get(entity)
-        if event_id == previous:
-            continue
-        if previous is not None:
-            battle_v2._tactical_memories.pop(entity, None)
-            battle_v2._last_tactical_mode.pop(entity, None)
-            print(
-                json.dumps(
-                    {
-                        "marker": "GENERIC_BATTLE_EVENT_TACTICAL_MEMORY_RESET",
-                        "actorId": entity,
-                        "previousEventId": previous,
-                        "eventId": event_id,
-                        "frame": int(frame),
-                        "model": EVENT_LIFECYCLE_MODEL,
-                        "persistentActorStateReset": False,
-                        "g05ContactTruthReset": False,
-                    },
-                    sort_keys=True,
-                ),
-                flush=True,
-            )
-        _last_event_by_actor[entity] = event_id
 
 
 def generic_battle_set_controls(
@@ -79,8 +38,7 @@ def generic_battle_set_controls(
     states: dict[str, Any],
     control_samples: list[dict[str, Any]],
 ) -> None:
-    _enforce_event_scoped_tactical_memory(frame, program, actors, states)
-    battle_v2.set_controls(
+    battle_v3.set_controls(
         frame,
         program,
         actors,
@@ -93,18 +51,22 @@ def generic_battle_set_controls(
 def generic_battle_g06_outcome(states: dict[str, Any], events: dict[str, Any]) -> dict[str, Any]:
     outcome = _ORIGINAL_G06_OUTCOME(states, events)
     if hardened._capture_output is None:
-        raise RuntimeError("GENERIC_BATTLE_V2_OUTPUT_DIR_UNAVAILABLE")
-    battle_v2.write_evidence(Path(hardened._capture_output))
+        raise RuntimeError("GENERIC_BATTLE_V3_OUTPUT_DIR_UNAVAILABLE")
+    battle_v3.write_evidence(Path(hardened._capture_output))
     return outcome
 
 
 def main() -> None:
-    battle_v2.reset()
-    _last_event_by_actor.clear()
+    battle_v3.reset()
 
+    # G04 clean successor: tactical history is actor-scoped across semantic event
+    # boundaries while low-level autonomy/lifecycle counters remain event-local.
     candidate43._ORIGINAL_SET_CONTROLS = generic_battle_set_controls
+
+    # Evidence attachment only; G06 persistence and G07 outcome authority remain.
     candidate44._ORIGINAL_G06_OUTCOME = generic_battle_g06_outcome
 
+    # Preserve the physically-earned visible-consequence realization.
     hardened.ConsequenceEngine = VisibleCausalConsequenceEngineV2
     runtime.ConsequenceEngine = VisibleCausalConsequenceEngineV2
 
@@ -114,9 +76,11 @@ def main() -> None:
                 "marker": "GENERIC_AUTONOMOUS_BATTLE_C461_ENGINEERING_READY",
                 "candidate": CANDIDATE,
                 "mechanism": MECHANISM,
-                "eventLifecycleModel": EVENT_LIFECYCLE_MODEL,
+                "fullAffectedLayerAudit": AUDIT,
                 "tacticalModel": TACTICAL_MODEL,
-                "battleControlModel": battle_v2.BATTLE_CONTROL_MODEL,
+                "battleControlModel": battle_v3.BATTLE_CONTROL_MODEL,
+                "battleSignalScope": BATTLE_SIGNAL_SCOPE,
+                "autonomyStateScope": "CURRENT_EVENT_ONLY",
                 "contactAuthority": "RECIPROCAL_NATIVE_SOLVER_RESPONSE_V1",
                 "consequenceModel": CONSEQUENCE_MODEL_V2,
                 "visualResponseModel": VISUAL_RESPONSE_MODEL,
@@ -124,9 +88,10 @@ def main() -> None:
                 "sameRuntimeAcrossAssets": True,
                 "liveWorldStateDriven": True,
                 "actorProfileCapabilityDriven": True,
+                "actorScopedContinuousBattleMemory": True,
+                "unrelatedActorContactContamination": False,
+                "firstObservationHistoricalContactAware": True,
                 "storyIntentOnly": True,
-                "eventScopedTacticalMemory": True,
-                "persistentActorDamagePreservedAcrossEvents": True,
                 "nativeContactAuthorityPreserved": True,
                 "damageAdmissionThresholdChanged": False,
                 "contactThresholdChanged": False,
