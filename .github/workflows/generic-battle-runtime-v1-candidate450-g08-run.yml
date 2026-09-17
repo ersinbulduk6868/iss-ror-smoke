@@ -81,15 +81,24 @@ jobs:
             -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" \
             -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' \
             "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
-          python3 - <<'PY' >> "$GITHUB_ENV"
+          python3 - <<'PY'
           import json,os
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
           assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
           assert d.get('service')=='iss-final-video-transfer-once', d
           assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
           a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
-          print('BUGATTI_SOURCE_URL='+a['signedUrl'])
+          assert isinstance(a.get('signedUrl'), str) and a['signedUrl'].startswith('https://'), d
           PY
+          BUGATTI_SOURCE_URL="$(python3 - <<'PY'
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          print(d['asset']['signedUrl'])
+          PY
+          )"
+          export BUGATTI_SOURCE_URL
+          echo "::add-mask::$BUGATTI_SOURCE_URL"
+          echo "BUGATTI_SOURCE_URL=$BUGATTI_SOURCE_URL" >> "$GITHUB_ENV"
           python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee candidate450-asset.log
           grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' candidate450-asset.log
           python3 - <<'PY' >> "$GITHUB_ENV"
