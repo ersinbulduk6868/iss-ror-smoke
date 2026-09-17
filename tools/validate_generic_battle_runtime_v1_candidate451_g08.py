@@ -85,25 +85,28 @@ def audit_camera_ast(tree: ast.AST) -> dict[str, int]:
 
 
 def audit_wrapper_ast(tree: ast.AST) -> None:
-    assignments: list[str] = []
+    external_patches: list[str] = []
+    protected_roots = {"candidate446", "hardened", "runtime"}
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                name = dotted(target)
-                if name:
-                    assignments.append(name)
+        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            continue
+        targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            name = dotted(target)
+            if name and name.split(".", 1)[0] in protected_roots:
+                external_patches.append(name)
     allowed = {
-        "REPO_ROOT",
-        "CANDIDATE",
-        "DEFAULT_SHORTS_RESOLUTION",
         "candidate446.CANDIDATE",
         "hardened.ForwardPreviewDirector",
         "runtime.CAMERA_MODEL",
         "runtime.setup_world",
     }
-    drift = sorted(set(assignments) - allowed)
+    drift = sorted(set(external_patches) - allowed)
+    missing = sorted(allowed - set(external_patches))
     if drift:
         raise SystemExit("G08_C451_WRAPPER_PATCH_SCOPE_DRIFT:" + ",".join(drift))
+    if missing:
+        raise SystemExit("G08_C451_REQUIRED_PATCH_MISSING:" + ",".join(missing))
 
 
 def main() -> None:
