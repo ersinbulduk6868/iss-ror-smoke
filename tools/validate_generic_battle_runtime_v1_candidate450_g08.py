@@ -14,7 +14,7 @@ FORBIDDEN_CALL_SUFFIXES = {
     "rig.command",
     "rig.brake",
     "rig.coast",
-    "keyframe_insert",  # allowed only for camera/target/lens; checked structurally below
+    "keyframe_insert",
     "DamageAccumulator.apply",
     "ConsequenceEngine.apply",
     "ImpactModel.estimate",
@@ -34,30 +34,18 @@ def check_camera_ast(tree: ast.AST) -> dict[str, object]:
     actor_mutation_assignments: list[str] = []
     forbidden_calls: list[str] = []
     camera_key_calls = 0
-
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets: list[ast.AST] = []
-            if isinstance(node, ast.Assign):
-                targets = list(node.targets)
-            else:
-                targets = [node.target]
+            targets = list(node.targets) if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 name = dotted(target)
                 if any(token in name for token in (
-                    ".chassis.location",
-                    ".chassis.rotation_euler",
-                    ".chassis.rotation_quaternion",
-                    ".linear_velocity",
-                    ".angular_velocity",
-                    ".rigid_body.kinematic",
-                    ".rigid_body.mass",
-                    ".state.structural_integrity",
-                    ".state.drive_efficiency",
+                    ".chassis.location", ".chassis.rotation_euler", ".chassis.rotation_quaternion",
+                    ".linear_velocity", ".angular_velocity", ".rigid_body.kinematic",
+                    ".rigid_body.mass", ".state.structural_integrity", ".state.drive_efficiency",
                     ".state.disabled",
                 )):
                     actor_mutation_assignments.append(name)
-
         if isinstance(node, ast.Call):
             name = dotted(node.func)
             if name.endswith("keyframe_insert"):
@@ -71,7 +59,6 @@ def check_camera_ast(tree: ast.AST) -> dict[str, object]:
                 forbidden_calls.append(name)
             if name.endswith("bpy.ops.object.transform_apply") or name.endswith("bpy.ops.rigidbody.object_add"):
                 forbidden_calls.append(name)
-
     if actor_mutation_assignments:
         raise SystemExit("G08_ACTOR_OR_PHYSICS_ASSIGNMENT_FORBIDDEN:" + ",".join(sorted(set(actor_mutation_assignments))))
     if forbidden_calls:
@@ -89,14 +76,13 @@ def check_wrapper_ast(tree: ast.AST) -> None:
                 name = dotted(target)
                 if name:
                     assignments.append(name)
-    # REPO_ROOT and CANDIDATE are module bootstrap/constants, not runtime patch
-    # authority. All external module mutations remain camera-only.
     allowed = {
         "REPO_ROOT",
         "CANDIDATE",
         "candidate446.CANDIDATE",
         "hardened.ForwardPreviewDirector",
         "runtime.CAMERA_MODEL",
+        "runtime.setup_world",
     }
     drift = sorted(set(assignments) - allowed)
     if drift:
@@ -112,7 +98,6 @@ def main() -> None:
     camera_text = CAMERA.read_text(encoding="utf-8")
     wrapper_text = WRAPPER.read_text(encoding="utf-8")
     preflight_text = PREFLIGHT.read_text(encoding="utf-8")
-
     camera_tree = ast.parse(camera_text, filename=str(CAMERA))
     wrapper_tree = ast.parse(wrapper_text, filename=str(WRAPPER))
     ast_info = check_camera_ast(camera_tree)
@@ -141,6 +126,10 @@ def main() -> None:
         'CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_5_0_G08"',
         'hardened.ForwardPreviewDirector = EventDrivenCinematicCameraDirector',
         'runtime.CAMERA_MODEL = CAMERA_G08_MODEL',
+        'runtime.setup_world = g08_setup_world',
+        'request.setdefault("renderSpec", {})["aspectRatio"] = "9:16"',
+        'request.setdefault("renderSpec", {})["resolution"] = {"width": 540, "height": 960}',
+        '"presentationContractEnforcedByG08": True',
         '"gateScope": "G08_EVENT_DRIVEN_CINEMATIC_CAMERA_ONLY"',
         '"g07DramaAuthorityChanged": False',
         '"gateClosed": False',
@@ -159,14 +148,9 @@ def main() -> None:
 
     raw = (camera_text + "\n" + wrapper_text).lower()
     forbidden_literals = (
-        "forcedwinner=true",
-        "forced_winner = true",
-        "teleport(",
-        "min_damage_severity =",
-        "contact_threshold =",
-        "impactenergyjtarget",
-        "exactcollisionframe",
-        "bugatti" + "specific",
+        "forcedwinner=true", "forced_winner = true", "teleport(",
+        "min_damage_severity =", "contact_threshold =", "impactenergyjtarget",
+        "exactcollisionframe", "bugatti" + "specific",
     )
     present = [token for token in forbidden_literals if token in raw]
     if present:
@@ -180,6 +164,8 @@ def main() -> None:
         "cameraModel": "ISS_EVENT_DRIVEN_CINEMATIC_CAMERA_DIRECTOR_V2",
         "phaseAwareShotGrammar": True,
         "verticalReadabilityOracle": True,
+        "verticalShortsPresentationContractEnforced": True,
+        "verticalShortsResolution": [540, 960],
         "cameraKeyCallCount": ast_info["cameraKeyCallCount"],
         "g04SourceMutationRequired": False,
         "g05SourceMutationRequired": False,
