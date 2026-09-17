@@ -14,7 +14,7 @@ on:
 
 concurrency:
   group: iss-generic-battle-runtime-v1-candidate450-g08-run
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -31,7 +31,7 @@ jobs:
   g08:
     name: Candidate 4.5.0 G08 event-driven cinematic camera
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - name: Checkout G08 candidate
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -140,35 +140,45 @@ jobs:
           grep -q "Blender ${BLENDER_VERSION}" candidate450-blender-version.log
           echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
 
-      - name: Run exact Bugatti G08
+      - name: Run exact Bugatti G08 machine runtime
+        timeout-minutes: 12
         shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
         run: |
           set -euo pipefail
           D=artifacts/generic-battle-runtime-v1-candidate450-g08/exact-bugatti
+          echo 'G08_EXACT_MACHINE_RUNTIME_BEGIN'
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
             --python blender/run_generic_battle_runtime_v1_candidate450_g08.py -- \
-            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" --render-previews \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
             2>&1 | tee candidate450-bugatti-runtime.log
           grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE450_G08_ENGINEERING_PASS' candidate450-bugatti-runtime.log
           grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate450-bugatti-runtime.log
           grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' candidate450-bugatti-runtime.log
           grep -q 'G08_CAMERA_EVIDENCE_WRITTEN' candidate450-bugatti-runtime.log
           grep -q '"success": true' candidate450-bugatti-runtime.log
+          echo 'G08_EXACT_MACHINE_RUNTIME_END=PASS'
 
-      - name: Run generic hypercar G08 same source
+      - name: Run generic hypercar G08 machine runtime
+        timeout-minutes: 12
         shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
         run: |
           set -euo pipefail
           D=artifacts/generic-battle-runtime-v1-candidate450-g08/generic-hypercar
+          echo 'G08_GENERIC_MACHINE_RUNTIME_BEGIN'
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
             --python blender/run_generic_battle_runtime_v1_candidate450_g08.py -- \
-            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" --render-previews \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
             2>&1 | tee candidate450-generic-runtime.log
           grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE450_G08_ENGINEERING_PASS' candidate450-generic-runtime.log
           grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate450-generic-runtime.log
           grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' candidate450-generic-runtime.log
           grep -q 'G08_CAMERA_EVIDENCE_WRITTEN' candidate450-generic-runtime.log
           grep -q '"success": true' candidate450-generic-runtime.log
+          echo 'G08_GENERIC_MACHINE_RUNTIME_END=PASS'
 
       - name: Strict G08 machine framing acceptance
         shell: bash
@@ -189,14 +199,71 @@ jobs:
           grep -q '"gateClosed": false' candidate450-machine.log
           echo 'ISS_G08_MACHINE_FRAMING_ACCEPTANCE=PASS_HUMAN_REVIEW_PENDING'
 
+      - name: Prepare isolated low-cost human review fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-battle-runtime-v1-candidate450-g08
+          for NAME in exact-bugatti generic-hypercar; do
+            SRC="$ROOT/$NAME"
+            DST="$ROOT/review-$NAME"
+            mkdir -p "$DST"
+            cp "$SRC/request.json" "$DST/request.json"
+            cp "$SRC/asset-map.json" "$DST/asset-map.json"
+            python3 - "$DST/request.json" <<'PY'
+          import json,sys
+          p=sys.argv[1]
+          d=json.load(open(p, encoding='utf-8'))
+          render=d.setdefault('renderSpec', {})
+          render['resolution']={'width':360,'height':640}
+          with open(p,'w',encoding='utf-8') as f:
+              json.dump(d,f,indent=2,sort_keys=True)
+          PY
+          done
+          echo 'G08_HUMAN_REVIEW_FIXTURES_360X640=PASS'
+
+      - name: Render exact Bugatti G08 human review previews
+        timeout-minutes: 15
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate450-g08/review-exact-bugatti
+          echo 'G08_EXACT_REVIEW_RENDER_BEGIN'
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate450_g08.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" --render-previews \
+            2>&1 | tee candidate450-bugatti-review-runtime.log
+          grep -q 'G08_CAMERA_EVIDENCE_WRITTEN' candidate450-bugatti-review-runtime.log
+          grep -q '"success": true' candidate450-bugatti-review-runtime.log
+          echo 'G08_EXACT_REVIEW_RENDER_END=PASS'
+
+      - name: Render generic hypercar G08 human review previews
+        timeout-minutes: 15
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate450-g08/review-generic-hypercar
+          echo 'G08_GENERIC_REVIEW_RENDER_BEGIN'
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate450_g08.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" --render-previews \
+            2>&1 | tee candidate450-generic-review-runtime.log
+          grep -q 'G08_CAMERA_EVIDENCE_WRITTEN' candidate450-generic-review-runtime.log
+          grep -q '"success": true' candidate450-generic-review-runtime.log
+          echo 'G08_GENERIC_REVIEW_RENDER_END=PASS'
+
       - name: Build human cinematic review sheet
         shell: bash
         run: |
           set -euo pipefail
           ROOT=artifacts/generic-battle-runtime-v1-candidate450-g08
           python3 tools/build_g08_review_contact_sheet.py \
-            --bugatti-dir "$ROOT/exact-bugatti" \
-            --generic-dir "$ROOT/generic-hypercar" \
+            --bugatti-dir "$ROOT/review-exact-bugatti" \
+            --generic-dir "$ROOT/review-generic-hypercar" \
             --output "$ROOT/g08-human-review-contact-sheet.jpg" | tee candidate450-contact-sheet.log
           grep -q 'G08_REVIEW_CONTACT_SHEET=PASS' candidate450-contact-sheet.log
 
@@ -213,6 +280,8 @@ jobs:
             candidate450-bugatti-runtime.log
             candidate450-generic-runtime.log
             candidate450-machine.log
+            candidate450-bugatti-review-runtime.log
+            candidate450-generic-review-runtime.log
             candidate450-contact-sheet.log
             artifacts/generic-battle-runtime-v1-candidate450-g08/
             artifacts/visual-vnext-rc2-preflight/
