@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
-      - name: Verify Sketchfab secret is visible without downloading an asset
+      - name: Verify preferred Sketchfab secret binding
         shell: bash
         run: |
           set -euo pipefail
@@ -50,10 +50,11 @@ jobs:
           assert d.get('success') is True, d
           assert d.get('status') == 'READY', d
           assert d.get('sketchfabCredentialPresent') is True, d
+          assert d.get('sketchfabCredentialSource') == 'SKETCHFAB_TOKEN', d
           assert d.get('exactSourceDownloadEnabled') is True, d
           assert d.get('diagnosticSourceDownloadEnabled') is True, d
           print('G03_SKETCHFAB_TOKEN_BINDING=PASS')
-          print('G03_ZERO_ASSET_DOWNLOAD_SMOKE=PASS')
+          print('G03_SKETCHFAB_PREFERRED_SECRET=SKETCHFAB_TOKEN')
           PY
 
   ferrari-secondary-genericity:
@@ -64,7 +65,7 @@ jobs:
       - name: Checkout repair candidate
         uses: actions/checkout@v4
 
-      - name: Resolve Ferrari diagnostic source and enforce size cap
+      - name: Resolve Ferrari source, auth, license and size
         shell: bash
         run: |
           set -euo pipefail
@@ -81,10 +82,12 @@ jobs:
           assert d.get('success') is True and d.get('status')=='DIAGNOSTIC_SIGNED_SOURCE_READY', d
           assert d.get('diagnosticOnly') is True
           assert d.get('gateClosureEligible') is False
+          assert d.get('credentialSource') == 'SKETCHFAB_TOKEN', d
           s=d['source']
           assert s['uid']==os.environ['FERRARI_UID']
           assert s['provider']=='sketchfab'
-          assert s['artifactKind']=='glb', s
+          assert s['artifactKind'] in ('glb','gltf'), s
+          assert s.get('downloadAuthScheme') == 'Bearer', s
           observed=str(s.get('observedLicense') or '').lower()
           assert 'attribution' in observed or 'cc' in observed, s
           size=s.get('declaredBytes')
@@ -94,21 +97,58 @@ jobs:
           with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
               f.write('FERRARI_SOURCE_URL='+s['signedUrl']+'\n')
               f.write('FERRARI_DECLARED_BYTES='+str(size)+'\n')
+              f.write('FERRARI_ARTIFACT_KIND='+s['artifactKind']+'\n')
           print('G03_FERRARI_SOURCE_PROBE=PASS')
+          print('G03_FERRARI_AUTH=PASS')
+          print('G03_FERRARI_LICENSE=PASS')
           print('G03_FERRARI_SIZE_CAP=PASS')
           PY
 
-      - name: Download Ferrari exact source and calculate SHA
+      - name: Download and safely materialize Ferrari source
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 --retry-all-errors "$FERRARI_SOURCE_URL" -o artifacts/g03-ferrari/ferrari-250-gto.glb
-          ACTUAL_SHA="$(sha256sum artifacts/g03-ferrari/ferrari-250-gto.glb | awk '{print $1}')"
-          ACTUAL_BYTES="$(stat -c '%s' artifacts/g03-ferrari/ferrari-250-gto.glb)"
-          echo "actualSha=$ACTUAL_SHA bytes=$ACTUAL_BYTES declaredBytes=$FERRARI_DECLARED_BYTES"
+          if [ "$FERRARI_ARTIFACT_KIND" = "glb" ]; then
+            curl --fail --location --retry 3 --retry-all-errors "$FERRARI_SOURCE_URL" -o artifacts/g03-ferrari/source.glb
+            ASSET_PATH="$GITHUB_WORKSPACE/artifacts/g03-ferrari/source.glb"
+            DOWNLOAD_PATH="$ASSET_PATH"
+          else
+            curl --fail --location --retry 3 --retry-all-errors "$FERRARI_SOURCE_URL" -o artifacts/g03-ferrari/source-gltf.zip
+            DOWNLOAD_PATH="$GITHUB_WORKSPACE/artifacts/g03-ferrari/source-gltf.zip"
+            python3 - <<'PY'
+          import os, zipfile
+          from pathlib import Path
+          src=Path('artifacts/g03-ferrari/source-gltf.zip')
+          out=Path('artifacts/g03-ferrari/gltf')
+          out.mkdir(parents=True,exist_ok=True)
+          with zipfile.ZipFile(src) as z:
+              infos=z.infolist()
+              total=0
+              for i in infos:
+                  p=Path(i.filename)
+                  assert not p.is_absolute() and '..' not in p.parts, f'UNSAFE_ARCHIVE_PATH:{i.filename}'
+                  total += int(i.file_size)
+              assert total <= 300_000_000, f'ARCHIVE_EXPANDED_TOO_LARGE:{total}'
+              z.extractall(out)
+          gltfs=sorted(out.rglob('*.gltf'))
+          assert gltfs, 'GLTF_SCENE_MISSING'
+          preferred=[p for p in gltfs if p.name.lower()=='scene.gltf']
+          asset=(preferred or gltfs)[0].resolve()
+          with open(os.environ['GITHUB_ENV'],'a',encoding='utf-8') as f:
+              f.write('FERRARI_ASSET_PATH='+str(asset)+'\n')
+          print('G03_FERRARI_GLTF_SAFE_EXTRACTION=PASS')
+          PY
+            ASSET_PATH="$(grep '^FERRARI_ASSET_PATH=' "$GITHUB_ENV" | tail -1 | cut -d= -f2-)"
+          fi
+          ACTUAL_BYTES="$(stat -c '%s' "$DOWNLOAD_PATH")"
           test "$ACTUAL_BYTES" -gt 10000
           test "$ACTUAL_BYTES" -le 100000000
-          echo "FERRARI_SOURCE_SHA=$ACTUAL_SHA" >> "$GITHUB_ENV"
+          DOWNLOAD_SHA="$(sha256sum "$DOWNLOAD_PATH" | awk '{print $1}')"
+          ASSET_SHA="$(sha256sum "$ASSET_PATH" | awk '{print $1}')"
+          echo "FERRARI_ASSET_PATH=$ASSET_PATH" >> "$GITHUB_ENV"
+          echo "FERRARI_DOWNLOAD_SHA=$DOWNLOAD_SHA" >> "$GITHUB_ENV"
+          echo "FERRARI_ASSET_SHA=$ASSET_SHA" >> "$GITHUB_ENV"
+          echo "downloadSha=$DOWNLOAD_SHA assetSha=$ASSET_SHA bytes=$ACTUAL_BYTES kind=$FERRARI_ARTIFACT_KIND"
           echo 'G03_FERRARI_EXACT_SOURCE_DOWNLOAD=PASS'
 
       - name: Install Blender runtime dependencies
@@ -138,7 +178,7 @@ jobs:
           set -euo pipefail
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
             --python blender/validate_g03_ferrari_secondary_asset.py -- \
-            --asset artifacts/g03-ferrari/ferrari-250-gto.glb \
+            --asset "$FERRARI_ASSET_PATH" \
             --result artifacts/g03-ferrari/result.json \
             2>&1 | tee artifacts/g03-ferrari/blender-onboarding.log
           grep -F 'ISS_G03_FERRARI_SECONDARY_GENERICITY_PASS' artifacts/g03-ferrari/blender-onboarding.log
@@ -154,7 +194,7 @@ jobs:
           assert d['test']=='G03_SECONDARY_REAL_ASSET_GENERICITY'
           assert d['gateClosureEligible'] is False
           assert d['gateClosureClaimed'] is False
-          assert d['sourceSha256']==os.environ['FERRARI_SOURCE_SHA']
+          assert d['sourceSha256']==os.environ['FERRARI_ASSET_SHA']
           assert d['sameGenericAdapterSource']=='blender/iss_battle_runtime_assets.py'
           assert d['assetSpecificBattleSourceCode'] is False
           assert d['fixtureNameBranchRequired'] is False
