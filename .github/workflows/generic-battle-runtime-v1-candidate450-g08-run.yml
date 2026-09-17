@@ -1,6 +1,7 @@
 name: ISS Generic Battle Runtime v1 Candidate 4.5.0 G08 branch acceptance
 
 on:
+  workflow_dispatch:
   push:
     branches: [iss-engineering/generic-battle-runtime-v1]
     paths:
@@ -22,6 +23,7 @@ permissions:
 env:
   BLENDER_VERSION: '4.5.13'
   EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
   ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
   SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
 
@@ -83,7 +85,8 @@ jobs:
           import json,os
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
           assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
-          assert d.get('version')=='3.3.13-generic-runtime-candidate446-g07-access', d
+          assert d.get('service')=='iss-final-video-transfer-once', d
+          assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
           a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
           print('BUGATTI_SOURCE_URL='+a['signedUrl'])
           PY
