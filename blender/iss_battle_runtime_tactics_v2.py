@@ -57,6 +57,7 @@ class TacticalMemory:
     reposition_until_frame: int = 0
     flank_bias: float = 1.0
     transitions: int = 0
+    initialized: bool = False
 
     def snapshot(self) -> dict[str, object]:
         return asdict(self)
@@ -137,12 +138,26 @@ class GenericBattleTacticalPlanner:
         story = str(obs.story_tactic or "").upper()
         bias = 1.0 if symmetry_bias >= 0.0 else -1.0
         memory.flank_bias = bias
-        new_contact = obs.contact_count > memory.last_contact_count
-        new_damage = obs.damage_count > memory.last_damage_count
-        own_new_damage = obs.own_damage_event_count > memory.last_own_damage_count
-        memory.last_contact_count = max(memory.last_contact_count, int(obs.contact_count))
-        memory.last_damage_count = max(memory.last_damage_count, int(obs.damage_count))
-        memory.last_own_damage_count = max(memory.last_own_damage_count, int(obs.own_damage_event_count))
+
+        # A newly-created tactical memory must baseline persistent actor damage
+        # instead of interpreting damage inherited from a prior event as a new
+        # impact in this event. Only deltas observed after initialization may
+        # trigger BREAK_CONTACT.
+        if not memory.initialized:
+            memory.last_contact_count = int(obs.contact_count)
+            memory.last_damage_count = int(obs.damage_count)
+            memory.last_own_damage_count = int(obs.own_damage_event_count)
+            memory.initialized = True
+            new_contact = False
+            new_damage = False
+            own_new_damage = False
+        else:
+            new_contact = obs.contact_count > memory.last_contact_count
+            new_damage = obs.damage_count > memory.last_damage_count
+            own_new_damage = obs.own_damage_event_count > memory.last_own_damage_count
+            memory.last_contact_count = max(memory.last_contact_count, int(obs.contact_count))
+            memory.last_damage_count = max(memory.last_damage_count, int(obs.damage_count))
+            memory.last_own_damage_count = max(memory.last_own_damage_count, int(obs.own_damage_event_count))
 
         base_scale = GenericBattleTacticalPlanner._capability_speed_scale(obs)
         health_pressure = GenericBattleTacticalPlanner._health_pressure(obs)
