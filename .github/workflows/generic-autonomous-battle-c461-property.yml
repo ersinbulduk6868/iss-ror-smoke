@@ -6,7 +6,10 @@ on:
     branches: [iss-engineering/generic-battle-runtime-v1]
     paths:
       - '.github/workflows/generic-autonomous-battle-c461-property.yml'
-      - 'blender/iss_battle_runtime_tactics_v2.py'
+      - 'docs/iss-generic-autonomous-battle-c460-full-affected-layer-audit-20260917.md'
+      - 'blender/iss_battle_runtime_tactics_v3.py'
+      - 'blender/iss_battle_runtime_generic_battle_v3.py'
+      - 'blender/iss_battle_runtime_consequences_v2.py'
       - 'blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py'
       - 'tools/validate_generic_autonomous_battle_c461.py'
 
@@ -22,23 +25,30 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 8
     steps:
-      - name: Checkout candidate 4.6.1
+      - name: Checkout clean audited candidate 4.6.1
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - name: Static syntax and failure-family regression acceptance
+      - name: Static syntax and full failure-family regression acceptance
         shell: bash
         run: |
           set -euo pipefail
           python3 -m py_compile \
-            blender/iss_battle_runtime_tactics_v2.py \
+            blender/iss_battle_runtime_tactics_v3.py \
+            blender/iss_battle_runtime_generic_battle_v3.py \
+            blender/iss_battle_runtime_consequences_v2.py \
             blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py \
             tools/validate_generic_autonomous_battle_c461.py
           python3 tools/validate_generic_autonomous_battle_c461.py | tee c461-property.log
           grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C461_PROPERTY_ACCEPTANCE"' c461-property.log
           grep -q '"status": "PASS"' c461-property.log
-          grep -q '"priorEventDamageBaselined": true' c461-property.log
-          grep -q '"counterattackStartsFromCurrentIntent": true' c461-property.log
-          grep -q '"eventScopedTacticalMemory": true' c461-property.log
-          grep -q '"persistentActorStatePreserved": true' c461-property.log
+          grep -q '"fullAffectedLayerAudit": "PASS"' c461-property.log
+          grep -q '"actorScopedContinuousBattleMemory": true' c461-property.log
+          grep -q '"firstObservationHistoricalContactAware": true' c461-property.log
+          grep -q '"unrelatedCDSignalsExcludedFromB": true' c461-property.log
+          grep -q '"contactWithoutDamageTriggersBattleCycle": true' c461-property.log
+          grep -q '"reciprocalSignalsDoNotRepeatedlyRetrigger": true' c461-property.log
+          grep -q '"autonomyCurrentEventCountersRemainEventScoped": true' c461-property.log
+          grep -q '"geometryConfirmedSeparationBeforeReengagement": true' c461-property.log
           grep -q '"nativeContactAuthorityPreserved": true' c461-property.log
+          grep -q '"damageAdmissionThresholdChanged": false' c461-property.log
           grep -q '"perAssetBattleCode": false' c461-property.log
           echo 'ISS_GENERIC_AUTONOMOUS_BATTLE_C461_PROPERTY_ACCEPTANCE=PASS'
