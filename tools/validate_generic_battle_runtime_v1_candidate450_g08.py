@@ -89,7 +89,10 @@ def check_wrapper_ast(tree: ast.AST) -> None:
                 name = dotted(target)
                 if name:
                     assignments.append(name)
+    # REPO_ROOT and CANDIDATE are module bootstrap/constants, not runtime patch
+    # authority. All external module mutations remain camera-only.
     allowed = {
+        "REPO_ROOT",
         "CANDIDATE",
         "candidate446.CANDIDATE",
         "hardened.ForwardPreviewDirector",
