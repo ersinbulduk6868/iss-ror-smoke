@@ -93,13 +93,7 @@ class TacticalGoal:
 
 
 class GenericBattleTacticalPlanner:
-    """Asset-agnostic battle decision policy over live state and capabilities.
-
-    Story supplies only semantic intent/phase. This planner chooses tactical mode,
-    relative goal geometry and speed intent from current world state. It never
-    consumes asset names, fixed world coordinates, collision frames, target impact
-    speeds or target impact energies.
-    """
+    """Asset-agnostic battle decision policy over live state and capabilities."""
 
     @staticmethod
     def _set_mode(memory: TacticalMemory, mode: str, reason: str) -> bool:
@@ -149,12 +143,15 @@ class GenericBattleTacticalPlanner:
         return clamp((0.45 + 0.35 * drive + 0.20 * integrity) * (0.85 + 0.20 * braking_ratio), 0.20, 1.0)
 
     @staticmethod
-    def decide(
-        memory: TacticalMemory,
-        obs: TacticalObservation,
-        *,
-        symmetry_bias: float = 1.0,
-    ) -> TacticalGoal:
+    def _settle(memory: TacticalMemory) -> None:
+        memory.break_until_frame = 0
+        memory.reposition_until_frame = 0
+        memory.reposition_duration_frames = 0
+        memory.separation_required_m = 0.0
+        memory.separation_achieved = True
+
+    @staticmethod
+    def decide(memory: TacticalMemory, obs: TacticalObservation, *, symmetry_bias: float = 1.0) -> TacticalGoal:
         phase = str(obs.phase or "").upper()
         story = str(obs.story_tactic or "").upper()
         bias = 1.0 if symmetry_bias >= 0.0 else -1.0
@@ -165,9 +162,7 @@ class GenericBattleTacticalPlanner:
             memory.last_damage_count = int(obs.damage_count)
             memory.last_own_damage_count = int(obs.own_damage_event_count)
             memory.initialized = True
-            new_contact = False
-            new_damage = False
-            own_new_damage = False
+            new_contact = new_damage = own_new_damage = False
         else:
             new_contact = obs.contact_count > memory.last_contact_count
             new_damage = obs.damage_count > memory.last_damage_count
@@ -183,6 +178,13 @@ class GenericBattleTacticalPlanner:
         if obs.own_disabled:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "DISABLED", "ACTOR_DISABLED")
             return TacticalGoal("DISABLED", memory.reason, "COAST", 0.0, 0.0, 0.0, False, 0.0, transition, memory.cycle)
+
+        # Terminal story intent owns lifecycle priority. A prior contact recovery
+        # may never make an actor keep reversing/repositioning through PAYOFF.
+        if story in {"HOLD", "SETTLE"} or phase == "PAYOFF":
+            GenericBattleTacticalPlanner._settle(memory)
+            transition = GenericBattleTacticalPlanner._set_mode(memory, "HOLD", "STORY_HIGH_LEVEL_HOLD") or transition
+            return TacticalGoal("HOLD", memory.reason, "BRAKE", 0.0, 0.0, 0.0, False, 1.0, transition, memory.cycle)
 
         if (new_contact or own_new_damage or new_damage) and int(obs.frame) > int(memory.break_until_frame):
             reverse_frames, turn_frames = GenericBattleTacticalPlanner._break_frames(obs)
@@ -201,63 +203,36 @@ class GenericBattleTacticalPlanner:
                 transition = GenericBattleTacticalPlanner._set_mode(memory, "REPOSITION", "SEPARATION_CONFIRMED") or transition
             else:
                 transition = GenericBattleTacticalPlanner._set_mode(memory, "BREAK_CONTACT", "SEPARATION_NOT_YET_CONFIRMED") or transition
-                return TacticalGoal(
-                    "BREAK_CONTACT", memory.reason, "REVERSE", clamp(base_scale * 0.72, 0.18, 0.75),
-                    0.0, bias * 0.18, False, 0.0, transition, memory.cycle,
-                )
+                return TacticalGoal("BREAK_CONTACT", memory.reason, "REVERSE", clamp(base_scale * 0.72, 0.18, 0.75), 0.0, bias * 0.18, False, 0.0, transition, memory.cycle)
 
         if memory.cycle > 0 and memory.separation_achieved and obs.frame <= memory.reposition_until_frame:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "REPOSITION", "POST_CONTACT_SPACING") or transition
-            return TacticalGoal(
-                "REPOSITION", memory.reason, "ACCELERATE", clamp(base_scale * 0.52, 0.18, 0.68),
-                -0.30, bias * 1.05, False, 0.0, transition, memory.cycle,
-            )
-
-        if story in {"HOLD", "SETTLE"} or phase == "PAYOFF":
-            transition = GenericBattleTacticalPlanner._set_mode(memory, "HOLD", "STORY_HIGH_LEVEL_HOLD") or transition
-            return TacticalGoal("HOLD", memory.reason, "BRAKE", 0.0, 0.0, 0.0, False, 1.0, transition, memory.cycle)
+            return TacticalGoal("REPOSITION", memory.reason, "ACCELERATE", clamp(base_scale * 0.52, 0.18, 0.68), -0.30, bias * 1.05, False, 0.0, transition, memory.cycle)
 
         if story in {"EVADE", "REGROUP", "REVERSE"}:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "EVADE", "STORY_HIGH_LEVEL_EVASION") or transition
-            return TacticalGoal(
-                "EVADE", memory.reason, "REVERSE" if abs(obs.heading_error_rad) < 0.75 else "ACCELERATE",
-                clamp(base_scale * 0.62, 0.18, 0.72), -1.15, bias * 0.65, False, 0.0, transition, memory.cycle,
-            )
+            return TacticalGoal("EVADE", memory.reason, "REVERSE" if abs(obs.heading_error_rad) < 0.75 else "ACCELERATE", clamp(base_scale * 0.62, 0.18, 0.72), -1.15, bias * 0.65, False, 0.0, transition, memory.cycle)
 
         if health_pressure > 0.28 and phase not in {"CLIMAX", "COUNTERATTACK"}:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "EVADE", "DAMAGE_STATE_DISADVANTAGE") or transition
-            return TacticalGoal(
-                "EVADE", memory.reason, "ACCELERATE", clamp(base_scale * 0.58, 0.16, 0.66),
-                -1.00, bias * 0.85, False, 0.0, transition, memory.cycle,
-            )
+            return TacticalGoal("EVADE", memory.reason, "ACCELERATE", clamp(base_scale * 0.58, 0.16, 0.66), -1.00, bias * 0.85, False, 0.0, transition, memory.cycle)
 
         if phase == "COUNTERATTACK" or story == "COUNTER":
             transition = GenericBattleTacticalPlanner._set_mode(memory, "COUNTER", "CAUSAL_COUNTERATTACK_WINDOW") or transition
-            return TacticalGoal(
-                "COUNTER", memory.reason, "ACCELERATE", clamp(base_scale * 0.90, 0.30, 1.0),
-                -0.10, bias * 0.38, True, 0.0, transition, memory.cycle,
-            )
+            return TacticalGoal("COUNTER", memory.reason, "ACCELERATE", clamp(base_scale * 0.90, 0.30, 1.0), -0.10, bias * 0.38, True, 0.0, transition, memory.cycle)
 
         if story in {"FLANK", "SURROUND"} or obs.contention >= 0.48 or abs(obs.heading_error_rad) > 0.95:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "FLANK", "GEOMETRY_OR_CONTENTION") or transition
             lateral = 0.90 if story != "SURROUND" else 1.20
-            return TacticalGoal(
-                "FLANK", memory.reason, "ACCELERATE", clamp(base_scale * 0.78, 0.24, 0.92),
-                -0.18, bias * lateral, False, 0.0, transition, memory.cycle,
-            )
+            return TacticalGoal("FLANK", memory.reason, "ACCELERATE", clamp(base_scale * 0.78, 0.24, 0.92), -0.18, bias * lateral, False, 0.0, transition, memory.cycle)
 
         stopping_distance = max(0.0, obs.closing_speed_mps) ** 2 / max(0.5, 2.0 * obs.own_braking_mps2)
         geometric_buffer = max(0.35, 0.18 * (obs.own_length_m + obs.target_length_m))
         if obs.requires_contact and obs.surface_gap_m > 0.0 and stopping_distance > obs.surface_gap_m + geometric_buffer:
             transition = GenericBattleTacticalPlanner._set_mode(memory, "BRAKE_APPROACH", "BRAKING_DISTANCE") or transition
             strength = clamp(stopping_distance / max(0.2, obs.surface_gap_m + geometric_buffer), 0.5, 1.8)
-            return TacticalGoal(
-                "BRAKE_APPROACH", memory.reason, "BRAKE", 0.0, 0.0, 0.0, False, strength, transition, memory.cycle,
-            )
+            return TacticalGoal("BRAKE_APPROACH", memory.reason, "BRAKE", 0.0, 0.0, 0.0, False, strength, transition, memory.cycle)
 
         transition = GenericBattleTacticalPlanner._set_mode(memory, "ENGAGE", "LIVE_STATE_ENGAGEMENT") or transition
         contact_commit = bool(obs.requires_contact and abs(obs.heading_error_rad) <= 0.70 and obs.contention < 0.80)
-        return TacticalGoal(
-            "ENGAGE", memory.reason, "ACCELERATE", clamp(base_scale, 0.25, 1.0),
-            -0.22, bias * 0.22, contact_commit, 0.0, transition, memory.cycle,
-        )
+        return TacticalGoal("ENGAGE", memory.reason, "ACCELERATE", clamp(base_scale, 0.25, 1.0), -0.22, bias * 0.22, contact_commit, 0.0, transition, memory.cycle)
