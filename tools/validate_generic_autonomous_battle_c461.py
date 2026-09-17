@@ -19,21 +19,26 @@ WRAPPER = ROOT / "blender" / "run_generic_battle_runtime_v1_candidate461_generic
 def main() -> None:
     c460._static_scope()
 
+    # Preserve the stricter G04 failure-family behavior: break-contact may not
+    # expire on a timer alone. It must continue until live geometry confirms
+    # separation, then reposition at stand-off, then re-engage/counter.
     sports_memory, sports = c460._sequence("sports")
     heavy_memory, heavy = c460._sequence("heavy")
     assert sports[0].mode == "ENGAGE"
     assert sports[1].mode == "BREAK_CONTACT" and sports[1].speed_intent == "REVERSE"
-    assert sports[2].mode == "REPOSITION"
+    assert sports[2].mode == "BREAK_CONTACT", "timer-only break-contact completion forbidden"
+    assert sports[3].mode == "REPOSITION" and sports_memory.separation_achieved
     assert sports[4].mode == "COUNTER" and sports[4].contact_commit
     assert heavy[0].mode == "ENGAGE"
-    assert heavy[1].mode == "BREAK_CONTACT"
-    assert heavy[2].mode == "REPOSITION"
-    assert heavy[4].mode == "COUNTER"
-    assert heavy_memory.break_until_frame >= sports_memory.break_until_frame
+    assert heavy[1].mode == "BREAK_CONTACT" and heavy[1].speed_intent == "REVERSE"
+    assert heavy[2].mode == "BREAK_CONTACT"
+    assert heavy[3].mode == "REPOSITION" and heavy_memory.separation_achieved
+    assert heavy[4].mode == "COUNTER" and heavy[4].contact_commit
+    assert heavy_memory.separation_required_m >= sports_memory.separation_required_m
 
-    # Regression for C460 failure family: an actor may enter a new counterattack
-    # event already carrying persistent damage from a prior event. That inherited
-    # damage is baseline state, not a new contact and must not force BREAK_CONTACT.
+    # Regression for the C460 terminal failure family: an actor may enter a new
+    # counterattack event already carrying persistent damage from a prior event.
+    # That inherited damage is baseline state, not a fresh impact in this event.
     fresh_event_memory = TacticalMemory()
     inherited_damage_counter = GenericBattleTacticalPlanner.decide(
         fresh_event_memory,
@@ -79,7 +84,10 @@ def main() -> None:
                 "marker": "GENERIC_AUTONOMOUS_BATTLE_C461_PROPERTY_ACCEPTANCE",
                 "status": "PASS",
                 "samePlannerAcrossProfiles": True,
-                "heavyCapabilityDerivedBreakWindow": True,
+                "reverseMotionHeadingAware": True,
+                "geometryConfirmedSeparationBeforeReengagement": True,
+                "timerOnlyReengagementForbidden": True,
+                "heavyCapabilityDerivedSeparation": True,
                 "priorEventDamageBaselined": True,
                 "counterattackStartsFromCurrentIntent": True,
                 "eventScopedTacticalMemory": True,
