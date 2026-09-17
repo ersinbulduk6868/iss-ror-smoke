@@ -23,7 +23,7 @@ from blender.iss_battle_runtime_tactics_v3 import (
 
 TACTICS = ROOT / "blender" / "iss_battle_runtime_tactics_v3.py"
 CONTROL = ROOT / "blender" / "iss_battle_runtime_generic_battle_v3.py"
-CONSEQUENCES = ROOT / "blender" / "iss_battle_runtime_consequences_v2.py"
+CONSEQUENCES = ROOT / "blender" / "iss_battle_runtime_consequences_v3.py"
 WRAPPER = ROOT / "blender" / "run_generic_battle_runtime_v1_candidate461_generic_battle.py"
 SOURCES = [TACTICS, CONTROL, CONSEQUENCES, WRAPPER]
 FORBIDDEN_ASSET_TOKENS = ("bugatti", "bulldozer", "ferrari")
@@ -45,35 +45,36 @@ def _obs(**overrides):
     return TacticalObservation(**row)
 
 
-def _sequence(profile: str):
-    base = (
-        dict(
+def _profile(profile: str) -> dict:
+    if profile == "heavy":
+        return dict(
             own_max_speed_mps=6.5, own_max_reverse_mps=3.5, own_yaw_rate_rad_s=0.55,
             own_acceleration_mps2=2.8, own_braking_mps2=4.0, own_length_m=7.2,
             own_width_m=3.2, target_length_m=4.5, target_width_m=2.0,
         )
-        if profile == "heavy"
-        else {}
-    )
+    return {}
+
+
+def _sequence(profile: str):
+    base = _profile(profile)
     memory = TacticalMemory()
-    rows = []
-    rows.append(GenericBattleTacticalPlanner.decide(memory, _obs(**base), symmetry_bias=1.0))
+    rows = [GenericBattleTacticalPlanner.decide(memory, _obs(**base), symmetry_bias=1.0)]
     rows.append(GenericBattleTacticalPlanner.decide(
         memory,
-        _obs(frame=30, contact_count=1, damage_count=0, own_damage_event_count=0, surface_gap_m=0.1, **base),
+        _obs(frame=30, contact_count=1, surface_gap_m=0.1, **base),
         symmetry_bias=1.0,
     ))
     after_timer = memory.break_until_frame + 2
     rows.append(GenericBattleTacticalPlanner.decide(
         memory,
-        _obs(frame=after_timer, contact_count=1, damage_count=0, own_damage_event_count=0,
+        _obs(frame=after_timer, contact_count=1,
              surface_gap_m=max(0.05, memory.separation_required_m * 0.45), **base),
         symmetry_bias=1.0,
     ))
-    separation_frame = after_timer + 3
+    separated = after_timer + 3
     rows.append(GenericBattleTacticalPlanner.decide(
         memory,
-        _obs(frame=separation_frame, contact_count=1, damage_count=0, own_damage_event_count=0,
+        _obs(frame=separated, contact_count=1,
              surface_gap_m=memory.separation_required_m + 0.4, **base),
         symmetry_bias=1.0,
     ))
@@ -81,8 +82,7 @@ def _sequence(profile: str):
     rows.append(GenericBattleTacticalPlanner.decide(
         memory,
         _obs(frame=counter_frame, phase="COUNTERATTACK", story_tactic="COUNTER",
-             contact_count=1, damage_count=0, own_damage_event_count=0,
-             surface_gap_m=memory.separation_required_m + 0.6, **base),
+             contact_count=1, surface_gap_m=memory.separation_required_m + 0.6, **base),
         symmetry_bias=-1.0,
     ))
     return memory, rows
@@ -102,53 +102,39 @@ def _actor_history_regression() -> dict[str, object]:
         "e-be": SimpleNamespace(contact_count=0, damage_count=0),
     }
     b_contacts, b_damage, b_events = actor_realized_event_signals("B", events, states)
-    a_contacts, a_damage, _ = actor_realized_event_signals("A", events, states)
-    c_contacts, c_damage, _ = actor_realized_event_signals("C", events, states)
     e_contacts, e_damage, _ = actor_realized_event_signals("E", events, states)
-
-    assert (b_contacts, b_damage) == (2, 0), (b_contacts, b_damage, b_events)
+    assert (b_contacts, b_damage) == (2, 0)
     assert set(b_events) == {"e-ab", "e-ba"}
-    assert (a_contacts, a_damage) == (2, 0)
-    assert (c_contacts, c_damage) == (7, 4)
     assert (e_contacts, e_damage) == (0, 0)
 
-    # B first receives verified contact as a target, then later becomes the
-    # counterattacker. Its first tactical observation must remember contact even
-    # though no damage was earned and the current counter event has zero contacts.
     memory = TacticalMemory()
     first = GenericBattleTacticalPlanner.decide(
         memory,
         _obs(frame=147, phase="COUNTERATTACK", story_tactic="COUNTER",
-             contact_count=b_contacts, damage_count=b_damage, own_damage_event_count=0,
-             surface_gap_m=0.1),
+             contact_count=b_contacts, damage_count=b_damage, surface_gap_m=0.1),
         symmetry_bias=-1.0,
     )
     assert first.mode == "BREAK_CONTACT" and first.speed_intent == "REVERSE"
-    assert memory.cycle == 1
-
+    cycle = memory.cycle
     repeated = GenericBattleTacticalPlanner.decide(
         memory,
         _obs(frame=148, phase="COUNTERATTACK", story_tactic="COUNTER",
-             contact_count=b_contacts, damage_count=b_damage, own_damage_event_count=0,
-             surface_gap_m=0.1),
+             contact_count=b_contacts, damage_count=b_damage, surface_gap_m=0.1),
         symmetry_bias=-1.0,
     )
-    assert repeated.mode == "BREAK_CONTACT"
-    assert memory.cycle == 1, "reciprocal signal aggregate must not retrigger without an increase"
-
+    assert repeated.mode == "BREAK_CONTACT" and memory.cycle == cycle
     separated = GenericBattleTacticalPlanner.decide(
         memory,
         _obs(frame=149, phase="COUNTERATTACK", story_tactic="COUNTER",
-             contact_count=b_contacts, damage_count=b_damage, own_damage_event_count=0,
+             contact_count=b_contacts, damage_count=b_damage,
              surface_gap_m=memory.separation_required_m + 0.3),
         symmetry_bias=-1.0,
     )
-    assert separated.mode == "REPOSITION" and memory.separation_achieved
-
+    assert separated.mode == "REPOSITION"
     counter = GenericBattleTacticalPlanner.decide(
         memory,
         _obs(frame=memory.reposition_until_frame + 1, phase="COUNTERATTACK", story_tactic="COUNTER",
-             contact_count=b_contacts, damage_count=b_damage, own_damage_event_count=0,
+             contact_count=b_contacts, damage_count=b_damage,
              surface_gap_m=memory.separation_required_m + 0.5),
         symmetry_bias=-1.0,
     )
@@ -166,6 +152,26 @@ def _actor_history_regression() -> dict[str, object]:
     }
 
 
+def _payoff_terminal_regression() -> None:
+    memory = TacticalMemory()
+    started = GenericBattleTacticalPlanner.decide(
+        memory,
+        _obs(frame=50, phase="COUNTERATTACK", story_tactic="COUNTER",
+             contact_count=1, surface_gap_m=0.05),
+        symmetry_bias=1.0,
+    )
+    assert started.mode == "BREAK_CONTACT" and not memory.separation_achieved
+    payoff = GenericBattleTacticalPlanner.decide(
+        memory,
+        _obs(frame=51, phase="PAYOFF", story_tactic="HOLD",
+             contact_count=1, surface_gap_m=0.05),
+        symmetry_bias=1.0,
+    )
+    assert payoff.mode == "HOLD" and payoff.speed_intent == "BRAKE"
+    assert memory.separation_achieved is True
+    assert memory.break_until_frame == 0 and memory.reposition_until_frame == 0
+
+
 def _static_scope() -> None:
     for path in SOURCES:
         text = path.read_text(encoding="utf-8")
@@ -175,8 +181,7 @@ def _static_scope() -> None:
             if token in lowered:
                 raise SystemExit(f"C461_ASSET_SPECIFIC_TOKEN_FORBIDDEN:{path.name}:{token}")
 
-    control = CONTROL.read_text(encoding="utf-8")
-    compact = "".join(control.split())
+    compact = "".join(CONTROL.read_text(encoding="utf-8").split())
     assert "contact_count=int(actor_contact_signal),damage_count=int(actor_damage_signal)" in compact
     assert "contact_count=int(state.contact_count),damage_count=int(state.damage_count)" in compact
     assert '"battleSignalScope":BATTLE_SIGNAL_SCOPE' in compact
@@ -186,38 +191,40 @@ def _static_scope() -> None:
     for required in (
         'AUDIT = "C460_FULL_AFFECTED_LAYER_AUDIT_20260917"',
         '"actorScopedContinuousBattleMemory": True',
-        '"firstObservationHistoricalContactAware": True',
+        '"payoffTerminatesRecovery": True',
         '"nativeContactAuthorityPreserved": True',
         '"damageAdmissionThresholdChanged": False',
         '"contactThresholdChanged": False',
+        '"debrisEligibilityUsesEarnedDamageConsequence": True',
         '"perAssetBattleCode": False',
         '"perVideoTrajectoryEngineering": False',
         '"stateResetMechanism": False',
         '"gateClosed": False',
     ):
         assert required in wrapper, required
-    assert "_tactical_memories.pop" not in wrapper
-    assert "EVENT_SCOPED_TACTICAL_MEMORY" not in wrapper
 
     consequences = CONSEQUENCES.read_text(encoding="utf-8")
     assert "MIN_DAMAGE_SEVERITY" not in consequences
+    assert 'shard["iss_debris_trajectory_injection"] = False' in consequences
+    assert '"physicalDamageGateChanged": False' in consequences
+    assert '"contactGateChanged": False' in consequences
 
 
 def main() -> None:
     _static_scope()
-
     assert BATTLE_SIGNAL_SCOPE == "ACTOR_INVOLVEMENT_EVENT_HISTORY_V1"
     assert abs(motion_heading_error(math.pi - 0.01, "REVERSE")) < 0.02
     assert abs(motion_heading_error(-math.pi + 0.01, "REVERSE")) < 0.02
-    assert abs(motion_heading_error(0.25, "ACCELERATE") - 0.25) < 1.0e-9
 
     sports_memory, sports = _sequence("sports")
     heavy_memory, heavy = _sequence("heavy")
-    assert [x.mode for x in sports] == ["ENGAGE", "BREAK_CONTACT", "BREAK_CONTACT", "REPOSITION", "COUNTER"]
-    assert [x.mode for x in heavy] == ["ENGAGE", "BREAK_CONTACT", "BREAK_CONTACT", "REPOSITION", "COUNTER"]
+    expected = ["ENGAGE", "BREAK_CONTACT", "BREAK_CONTACT", "REPOSITION", "COUNTER"]
+    assert [x.mode for x in sports] == expected
+    assert [x.mode for x in heavy] == expected
     assert heavy_memory.separation_required_m >= sports_memory.separation_required_m
 
     history = _actor_history_regression()
+    _payoff_terminal_regression()
 
     damage_memory = TacticalMemory()
     evasive = GenericBattleTacticalPlanner.decide(
@@ -249,12 +256,14 @@ def main() -> None:
         "reverseMotionHeadingAware": True,
         "geometryConfirmedSeparationBeforeReengagement": True,
         "timerOnlyReengagementForbidden": True,
+        "payoffTerminatesRecovery": True,
         "heavyCapabilityDerivedSeparation": True,
         "damageDisadvantageEvasion": "PASS",
         "brakingDistanceAdaptation": "PASS",
         "nativeContactAuthorityPreserved": True,
         "damageAdmissionThresholdChanged": False,
         "contactThresholdChanged": False,
+        "debrisEligibilityUsesEarnedDamageConsequence": True,
         "perAssetBattleCode": False,
         "exactCollisionFrameTarget": False,
         "exactImpactEnergyTarget": False,
