@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# Trigger clean Candidate 4.5.3 acceptance after workflow registration.
 from __future__ import annotations
 
 import ast
