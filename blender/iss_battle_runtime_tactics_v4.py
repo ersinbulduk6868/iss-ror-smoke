@@ -85,6 +85,9 @@ class TacticalObservation:
     target_damage_event_count: int
     last_own_impact_frame: int | None
     last_target_impact_frame: int | None
+    damage_required: bool
+    current_event_contact_count: int
+    current_event_damage_count: int
 
 
 @dataclass(slots=True)
@@ -173,6 +176,13 @@ class GenericBattleTacticalPlanner:
         return clamp((0.45 + 0.35 * drive + 0.20 * integrity) * (0.85 + 0.20 * braking_ratio), 0.20, 1.0)
 
     @staticmethod
+    def _damage_retry_scale(obs: TacticalObservation) -> float:
+        if not obs.damage_required or int(obs.current_event_damage_count) > 0:
+            return 1.0
+        failed_contacts = max(0, int(obs.current_event_contact_count))
+        return clamp(1.0 + 0.12 * failed_contacts, 1.0, 1.35)
+
+    @staticmethod
     def _settle(memory: TacticalMemory) -> None:
         memory.break_until_frame = 0
         memory.reposition_until_frame = 0
@@ -207,6 +217,7 @@ class GenericBattleTacticalPlanner:
 
         base_scale = GenericBattleTacticalPlanner._capability_speed_scale(obs)
         health_pressure = GenericBattleTacticalPlanner._health_pressure(obs)
+        damage_retry_scale = GenericBattleTacticalPlanner._damage_retry_scale(obs)
         transition = False
 
         if obs.own_disabled:
