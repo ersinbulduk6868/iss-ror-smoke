@@ -40,7 +40,7 @@ jobs:
             blender/iss_battle_runtime_generic_battle_v4.py \
             blender/iss_battle_runtime_consequences_v2.py \
             blender/iss_battle_runtime_consequences_v3.py \
-            blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py \
+            blender/run_generic_battle_runtime_v1_candidate462_generic_battle.py \
             tools/validate_generic_autonomous_battle_c462.py \
             tools/validate_generic_autonomous_battle_c462_result.py
           python3 tools/validate_generic_autonomous_battle_c462.py | tee c462-property.log
@@ -62,8 +62,8 @@ jobs:
           test "$(git hash-object blender/iss_battle_runtime_generic_battle_v2.py)" = 'f7de3d7413e701d9b065c70dc5882ad05c91a1df'
           test "$(git hash-object blender/iss_battle_runtime_consequences_v2.py)" = 'e011a10fee24802c13a1be22d66efe76c406c2c0'
           test "$(git hash-object blender/iss_battle_runtime_consequences_v3.py)" = 'b13a06eb50884299e5a3d083897e1a70d75aad34'
-          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py)" = 'fd764f5fab5a5d833e888ab2974e5530a7d30043'
-          test "$(git hash-object tools/validate_generic_autonomous_battle_c462.py)" = 'd61674dc5c200b3b3160481f24607a32f230c2de'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate462_generic_battle.py)" = 'fd764f5fab5a5d833e888ab2974e5530a7d30043'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c462.py)" = 'eebc76abf924c42f85e9d75c72b3f4bb16a291e8'
           test "$(git hash-object tools/validate_generic_autonomous_battle_c462_result.py)" = '71e97f881fa4e1f91ce7c2edafc30ed42a31f3b0'
           test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
           test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
@@ -194,7 +194,7 @@ jobs:
           set -euo pipefail
           D=artifacts/generic-autonomous-battle-c462/exact-bugatti
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
-            --python blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py -- \
+            --python blender/run_generic_battle_runtime_v1_candidate462_generic_battle.py -- \
             --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
             2>&1 | tee c462-bugatti-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C462_ENGINEERING_READY' c462-bugatti-runtime.log
@@ -214,7 +214,7 @@ jobs:
           set -euo pipefail
           D=artifacts/generic-autonomous-battle-c462/generic-hypercar
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
-            --python blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py -- \
+            --python blender/run_generic_battle_runtime_v1_candidate462_generic_battle.py -- \
             --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
             2>&1 | tee c462-generic-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C462_ENGINEERING_READY' c462-generic-runtime.log
