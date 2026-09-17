@@ -1,0 +1,203 @@
+name: ISS Generic Battle Runtime v1 Candidate 4.4.6 G07 causal climax acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1]
+    paths:
+      - '.github/workflows/generic-battle-runtime-v1-candidate446-g07.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate446.py'
+      - 'tools/build_generic_battle_runtime_v1_candidate446_g07.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate446.py'
+      - 'tools/validate_generic_battle_runtime_v1_candidate446_result.py'
+      - 'docs/ISS_G07_CANDIDATE446_SCOPE_PREFLIGHT.md'
+
+concurrency:
+  group: iss-generic-battle-runtime-v1-candidate446-g07
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  g07:
+    name: Candidate 4.4.6 G07 causal reversal-state climax
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout Candidate 4.4.6
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Scope property no-cheating and predecessor integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile blender/run_generic_battle_runtime_v1_candidate446.py tools/build_generic_battle_runtime_v1_candidate446_g07.py tools/validate_generic_battle_runtime_v1_candidate446.py tools/validate_generic_battle_runtime_v1_candidate446_result.py
+          python3 tools/validate_generic_battle_runtime_v1_candidate446.py | tee candidate446-property.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_PROPERTY_ACCEPTANCE"' candidate446-property.log
+          grep -q '"status": "PASS"' candidate446-property.log
+          grep -q '"gateScope": "G07_CAUSAL_DRAMA_LIFECYCLE_ONLY"' candidate446-property.log
+          grep -q '"climaxRequiresNewContact": false' candidate446-property.log
+          grep -q '"g07OwnsDramaLifecycleOnly": true' candidate446-property.log
+          grep -q '"g04SourceMutationRequired": false' candidate446-property.log
+          grep -q '"g05SourceMutationRequired": false' candidate446-property.log
+          grep -q '"g06SourceMutationRequired": false' candidate446-property.log
+          grep -q '"issR043ScopePreflightPreserved": true' candidate446-property.log
+          grep -q '"issR044UserPostflightApprovalRequired": true' candidate446-property.log
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate40.py)" = '5fac710c646e4609d4b63d0ae23e8612f1c9c81d'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate43.py)" = 'e8b7172232186e7fc8f447b65ac146aacfd58b10'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate443.py)" = '358d34c437ee27d3115117f0aaa1139704277212'
+          echo 'G04_G05_G06_AND_C443_SOURCE_INTEGRITY=PASS'
+
+      - name: Resolve exact Bugatti private read
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          m=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not m: raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(m.group(1))
+          PY
+            )"
+          fi
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          assert d.get('version')=='3.3.13-generic-runtime-candidate446-g07-access', d
+          a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('BUGATTI_SOURCE_URL='+a['signedUrl']+'\n')
+          print('CANDIDATE446_FRESH_BUGATTI_ACCESS=PASS')
+          PY
+
+      - name: Acquire exact full-source Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee candidate446-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' candidate446-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+
+      - name: Build scope-correct causal climax fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate446_g07.py --bugatti-primary "$BUGATTI_PRIMARY" | tee candidate446-fixtures.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_FIXTURES_PASS"' candidate446-fixtures.log
+          grep -q '"fixtureSemanticsChangedFromCandidate443": "CLIMAX_STATE_ONLY"' candidate446-fixtures.log
+          grep -q '"storyTargetActorOnlyForPhysicalEvents": true' candidate446-fixtures.log
+          grep -q '"storyTargetZonePrescribed": false' candidate446-fixtures.log
+          grep -q '"climaxRequiresNewContact": false' candidate446-fixtures.log
+          grep -q '"climaxPrescribesPhysics": false' candidate446-fixtures.log
+          grep -q '"perAssetCollisionEngineering": false' candidate446-fixtures.log
+
+      - name: Install Blender runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+
+      - name: Download exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee candidate446-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" candidate446-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run exact Bugatti Candidate 4.4.6
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate446-g07/exact-bugatti
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate446.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee candidate446-bugatti-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_ENGINEERING_PASS' candidate446-bugatti-runtime.log
+          grep -q 'G07_GENERIC_ENGAGEMENT_SURFACE_SELECTED' candidate446-bugatti-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate446-bugatti-runtime.log
+          grep -q 'G07_DRAMA_TRANSITION' candidate446-bugatti-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' candidate446-bugatti-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_SCOPE_EVIDENCE_WRITTEN' candidate446-bugatti-runtime.log
+          grep -q '"success": true' candidate446-bugatti-runtime.log
+
+      - name: Run generic hypercar Candidate 4.4.6 identical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-battle-runtime-v1-candidate446-g07/generic-hypercar
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate446.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee candidate446-generic-runtime.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_ENGINEERING_PASS' candidate446-generic-runtime.log
+          grep -q 'G07_GENERIC_ENGAGEMENT_SURFACE_SELECTED' candidate446-generic-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' candidate446-generic-runtime.log
+          grep -q 'G07_DRAMA_TRANSITION' candidate446-generic-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' candidate446-generic-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_SCOPE_EVIDENCE_WRITTEN' candidate446-generic-runtime.log
+          grep -q '"success": true' candidate446-generic-runtime.log
+
+      - name: Strict Candidate 4.4.6 G07 machine acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/validate_generic_battle_runtime_v1_candidate446_result.py \
+            --bugatti-evidence artifacts/generic-battle-runtime-v1-candidate446-g07/exact-bugatti/generic-battle-runtime-v1-evidence.json \
+            --bugatti-drama artifacts/generic-battle-runtime-v1-candidate446-g07/exact-bugatti/g07-causal-drama-evidence.json \
+            --generic-evidence artifacts/generic-battle-runtime-v1-candidate446-g07/generic-hypercar/generic-battle-runtime-v1-evidence.json \
+            --generic-drama artifacts/generic-battle-runtime-v1-candidate446-g07/generic-hypercar/g07-causal-drama-evidence.json | tee candidate446-machine.log
+          grep -q '"marker": "GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_MACHINE_ACCEPTANCE"' candidate446-machine.log
+          grep -q '"status": "PASS"' candidate446-machine.log
+          grep -q '"g07OwnsDramaLifecycleOnly": true' candidate446-machine.log
+          grep -q '"climaxRequiresNewContact": false' candidate446-machine.log
+          grep -q '"g04ControlLawChanged": false' candidate446-machine.log
+          grep -q '"g05ContactAuthorityChanged": false' candidate446-machine.log
+          grep -q '"g06DamagePersistenceChanged": false' candidate446-machine.log
+          grep -q '"perAssetCollisionEngineering": false' candidate446-machine.log
+          grep -q '"issR043ScopePreflightPreserved": true' candidate446-machine.log
+          grep -q '"issR044UserPostflightApprovalRequired": true' candidate446-machine.log
+          grep -q '"gateClosed": false' candidate446-machine.log
+          grep -q '"productionReadyClaimed": false' candidate446-machine.log
+          echo 'ISS_G07_MACHINE_ACCEPTANCE=PASS_PENDING_SCOPE_POSTFLIGHT_AND_USER_OK'
+
+      - name: Upload Candidate 4.4.6 evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: iss-generic-battle-runtime-v1-candidate446-g07-${{ github.run_id }}
+          path: |
+            candidate446-property.log
+            candidate446-asset.log
+            candidate446-fixtures.log
+            candidate446-blender-version.log
+            candidate446-bugatti-runtime.log
+            candidate446-generic-runtime.log
+            candidate446-machine.log
+            artifacts/generic-battle-runtime-v1-candidate446-g07/
+            artifacts/visual-vnext-rc2-preflight/
+          if-no-files-found: warn
+          retention-days: 14
