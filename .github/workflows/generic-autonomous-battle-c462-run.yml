@@ -1,6 +1,6 @@
 name: ISS Generic Autonomous Battle Candidate 4.6.2 Cross-Gate Acceptance
 
-# One clean real acceptance after the C460 three-iteration full affected-layer audit.
+# C462 harness full-audited after two pre-runtime harness failures; this run is the single real acceptance.
 on:
   push:
     branches: [iss-engineering/generic-battle-runtime-v1]
@@ -100,7 +100,7 @@ jobs:
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
           assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
           assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
-          assert d.get('version')=='3.3.20-generic-autonomous-battle-c462-access', d
+          assert d.get('version')=='3.3.21-generic-autonomous-battle-c462-access', d
           a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
           assert isinstance(a.get('signedUrl'),str) and a['signedUrl'].startswith('https://')
           PY
