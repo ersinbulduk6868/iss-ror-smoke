@@ -21,16 +21,21 @@ def require(condition: bool, code: str) -> None:
 
 def drama_complete(data: dict[str, Any], name: str) -> dict[str, Any]:
     require(data.get("status") == "COMPLETE", f"G08_{name}_G07_DRAMA_NOT_COMPLETE")
-    require(data.get("reversalObserved") is True, f"G08_{name}_REVERSAL_MISSING")
-    require(data.get("climaxObserved") is True, f"G08_{name}_CLIMAX_MISSING")
-    require(data.get("payoffObserved") is True, f"G08_{name}_PAYOFF_MISSING")
-    require(int(data.get("directTransactionCount") or 0) >= 2, f"G08_{name}_G05_TRANSACTION_CHAIN_INSUFFICIENT")
+    direct_transactions = data.get("directTransactions") or []
+    require(isinstance(direct_transactions, list), f"G08_{name}_G07_DIRECT_TRANSACTIONS_INVALID")
+    reversal = data.get("reversal")
+    climax = data.get("climax")
+    payoff = data.get("payoff")
+    require(isinstance(reversal, dict), f"G08_{name}_REVERSAL_MISSING")
+    require(isinstance(climax, dict), f"G08_{name}_CLIMAX_MISSING")
+    require(isinstance(payoff, dict), f"G08_{name}_PAYOFF_MISSING")
+    require(len(direct_transactions) >= 2, f"G08_{name}_G05_TRANSACTION_CHAIN_INSUFFICIENT")
     require(data.get("g04ControlLawChanged") is False, f"G08_{name}_G04_DRIFT")
     require(data.get("g05ContactAuthorityChanged") is False, f"G08_{name}_G05_DRIFT")
     require(data.get("g06DamagePersistenceChanged") is False, f"G08_{name}_G06_DRIFT")
     return {
         "status": data.get("status"),
-        "directTransactionCount": int(data.get("directTransactionCount") or 0),
+        "directTransactionCount": len(direct_transactions),
         "reversalObserved": True,
         "climaxObserved": True,
         "payoffObserved": True,
