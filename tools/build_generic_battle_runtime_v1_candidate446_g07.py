@@ -36,6 +36,17 @@ def _diff_paths(before: Any, after: Any, prefix: tuple[str, ...] = ()) -> set[tu
     return set() if before == after else {prefix}
 
 
+def _diffs_within_climax_scope(diffs: set[tuple[str, ...]]) -> bool:
+    # _diff_paths reports nested leaf paths when a whole allowed object is
+    # replaced (for example physicsRequirements.minQualifiedContacts). The G07
+    # scope contract is defined by the allowed top-level climax fields, so child
+    # paths are valid only when their top-level field is explicitly allowlisted.
+    return bool(diffs) and all(
+        bool(path) and (path[0],) in _ALLOWED_CLIMAX_DIFFS
+        for path in diffs
+    )
+
+
 def _patch_climax(request: dict[str, Any]) -> dict[str, Any]:
     events = {str(row.get("eventId")): row for row in request["battlePlan"]["events"]}
     climax = events["evt-climax"]
@@ -52,7 +63,7 @@ def _patch_climax(request: dict[str, Any]) -> dict[str, Any]:
         ),
     })
     diffs = _diff_paths(before, climax)
-    if not diffs or not diffs.issubset(_ALLOWED_CLIMAX_DIFFS):
+    if not _diffs_within_climax_scope(diffs):
         raise RuntimeError(f"CANDIDATE446_CLIMAX_DIFF_SCOPE_INVALID:{sorted(diffs)}")
     return before
 
@@ -84,7 +95,7 @@ def _verify(path: Path, before_climax: dict[str, Any]) -> None:
             raise RuntimeError(f"CANDIDATE446_PHYSICAL_EVENT_CONTRACT_DRIFT:{event_id}:{sorted(req)}")
 
     diffs = _diff_paths(before_climax, climax)
-    if not diffs.issubset(_ALLOWED_CLIMAX_DIFFS):
+    if not _diffs_within_climax_scope(diffs):
         raise RuntimeError(f"CANDIDATE446_POSTWRITE_DIFF_SCOPE_INVALID:{sorted(diffs)}")
 
     raw = json.dumps(request, sort_keys=True).lower()
