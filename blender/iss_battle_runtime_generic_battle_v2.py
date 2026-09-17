@@ -17,6 +17,7 @@ from blender.iss_battle_runtime_tactics_v2 import (
     GenericBattleTacticalPlanner,
     TacticalMemory,
     TacticalObservation,
+    motion_heading_error,
 )
 
 BATTLE_CONTROL_MODEL = "ISS_GENERIC_AUTONOMOUS_BATTLE_CONTROL_V2"
@@ -55,19 +56,32 @@ def _target_goal(actor: Any, target: Any, event: Any, tactical: Any, actors: dic
             lateral.normalize()
         return actor_pos + away * max(4.0, float(actor.dimensions.x) * 1.75) + lateral * tactical.lateral_offset_scale * max(1.0, float(target.dimensions.y))
 
+    q = target.chassis.matrix_world.to_quaternion()
+    forward = q @ Vector((1.0, 0.0, 0.0))
+    lateral = q @ Vector((0.0, 1.0, 0.0))
+    forward.z = 0.0
+    lateral.z = 0.0
+    if forward.length > 1.0e-8:
+        forward.normalize()
+    if lateral.length > 1.0e-8:
+        lateral.normalize()
+
+    if tactical.mode == "REPOSITION":
+        # Reposition is a stand-off maneuver around the live target, not an
+        # early re-engagement. Geometry determines spacing; no world coordinate
+        # or asset identity is encoded here.
+        stand_off = max(
+            1.10 * float(actor.dimensions.x),
+            0.95 * float(target.dimensions.x),
+            2.0 * max(float(actor.dimensions.y), float(target.dimensions.y)),
+            3.0,
+        )
+        return target_pos + away * stand_off + lateral * tactical.lateral_offset_scale * max(0.75, float(target.dimensions.y))
+
     zone = target.zone_world(event.target_zone)
     if tactical.contact_commit and tactical.mode in {"ENGAGE", "COUNTER"}:
         desired = zone
     else:
-        q = target.chassis.matrix_world.to_quaternion()
-        forward = q @ Vector((1.0, 0.0, 0.0))
-        lateral = q @ Vector((0.0, 1.0, 0.0))
-        forward.z = 0.0
-        lateral.z = 0.0
-        if forward.length > 1.0e-8:
-            forward.normalize()
-        if lateral.length > 1.0e-8:
-            lateral.normalize()
         desired = (
             zone
             + forward * tactical.forward_offset_scale * max(0.5, float(target.dimensions.x))
@@ -179,7 +193,8 @@ def set_controls(
             goal_point = fallback if fallback is not None else position + forward * max(3.0, float(actor.dimensions.x))
         target_vector = goal_point - position
         target_vector.z = 0.0
-        heading_error = physics.signed_heading_error(forward, target_vector)
+        raw_heading_error = physics.signed_heading_error(forward, target_vector)
+        heading_error = motion_heading_error(raw_heading_error, tactical.speed_intent)
         forward_speed = float(velocity.dot(forward))
 
         autonomy_key = (event.event_id, entity)
@@ -260,12 +275,18 @@ def set_controls(
                 "observation": {
                     "surfaceGapM": float(gap), "centerDistanceM": float(center_distance),
                     "closingSpeedMps": float(closing), "headingErrorRad": float(heading_error),
+                    "rawForwardHeadingErrorRad": float(raw_heading_error),
                     "contention": float(tactical_obs.contention), "ownIntegrity": float(actor.state.structural_integrity),
                     "ownDriveEfficiency": float(actor.state.drive_efficiency), "targetIntegrity": target_integrity,
                     "targetDriveEfficiency": target_efficiency, "contactCount": int(state.contact_count),
                     "damageCount": int(state.damage_count), "ownDamageEventCount": len(actor.state.damage_events),
                 },
-                "policy": {"progressTimeoutFrames": int(progress_timeout), "contactHandoffGapM": float(handoff_gap)},
+                "policy": {
+                    "progressTimeoutFrames": int(progress_timeout),
+                    "contactHandoffGapM": float(handoff_gap),
+                    "separationRequiredM": float(tactical_memory.separation_required_m),
+                    "separationAchieved": bool(tactical_memory.separation_achieved),
+                },
                 "assetIdentityBranch": False, "fixedWorldCoordinate": False, "exactCollisionFrameTarget": False,
                 "exactImpactEnergyTarget": False, "actorPoseOrVelocityMutation": False,
             }
@@ -342,6 +363,8 @@ def write_evidence(output_dir: Path) -> Path:
         "exactCollisionFrameTarget": False,
         "exactImpactEnergyTarget": False,
         "actorPoseOrVelocityMutation": False,
+        "reverseMotionHeadingAware": True,
+        "geometryConfirmedSeparationBeforeReengagement": True,
         "gateClosed": False,
         "productionReadyClaimed": False,
     }
