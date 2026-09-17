@@ -1,0 +1,292 @@
+name: ISS Generic Autonomous Battle Candidate 4.6.2 Cross-Gate Acceptance
+
+# One clean real acceptance after the C460 three-iteration full affected-layer audit.
+on:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1]
+    paths:
+      - '.github/workflows/generic-autonomous-battle-c462-run.yml'
+
+concurrency:
+  group: iss-generic-autonomous-battle-c462-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  c462:
+    name: Candidate 4.6.2 clean audited generic autonomous battle mechanism
+    runs-on: ubuntu-22.04
+    timeout-minutes: 48
+    steps:
+      - name: Checkout candidate 4.6.2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Master Plan preflight and full failure-family regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_tactics_v4.py \
+            blender/iss_battle_runtime_generic_battle_v4.py \
+            blender/iss_battle_runtime_consequences_v2.py \
+            blender/iss_battle_runtime_consequences_v3.py \
+            blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py \
+            tools/validate_generic_autonomous_battle_c462.py \
+            tools/validate_generic_autonomous_battle_c462_result.py
+          python3 tools/validate_generic_autonomous_battle_c462.py | tee c462-property.log
+          grep -q '"status": "PASS"' c462-property.log
+          grep -q '"fullAffectedLayerAudit": "PASS"' c462-property.log
+          grep -q '"actorScopedContinuousBattleMemory": true' c462-property.log
+          grep -q '"firstObservationHistoricalContactAware": true' c462-property.log
+          grep -q '"unrelatedCDSignalsExcludedFromB": true' c462-property.log
+          grep -q '"contactWithoutDamageTriggersBattleCycle": true' c462-property.log
+          grep -q '"autonomyCurrentEventCountersRemainEventScoped": true' c462-property.log
+          grep -q '"geometryConfirmedSeparationBeforeReengagement": true' c462-property.log
+          grep -q '"payoffTerminatesRecovery": true' c462-property.log
+          grep -q '"damageIntentAdaptiveRetry": true' c462-property.log
+          grep -q '"damageRetryUsesCapabilityAndLiveGeometry": true' c462-property.log
+          grep -q '"damageSatisfiedStopsRetryPressure": true' c462-property.log
+          grep -q '"debrisEligibilityUsesEarnedDamageConsequence": true' c462-property.log
+          test "$(git hash-object blender/iss_battle_runtime_tactics_v4.py)" = '98299e0323e72a2e4d958330d422b2c74dfb4cb7'
+          test "$(git hash-object blender/iss_battle_runtime_generic_battle_v4.py)" = '58d6bfbbd3702aa7676be3d6334aa6ac6e62a1c7'
+          test "$(git hash-object blender/iss_battle_runtime_generic_battle_v2.py)" = 'f7de3d7413e701d9b065c70dc5882ad05c91a1df'
+          test "$(git hash-object blender/iss_battle_runtime_consequences_v2.py)" = 'e011a10fee24802c13a1be22d66efe76c406c2c0'
+          test "$(git hash-object blender/iss_battle_runtime_consequences_v3.py)" = 'b13a06eb50884299e5a3d083897e1a70d75aad34'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py)" = 'fd764f5fab5a5d833e888ab2974e5530a7d30043'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c462.py)" = 'd61674dc5c200b3b3160481f24607a32f230c2de'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c462_result.py)" = '71e97f881fa4e1f91ce7c2edafc30ed42a31f3b0'
+          test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
+          test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
+          test "$(git hash-object blender/iss_battle_runtime_consequences.py)" = 'ff239d56b823e31046db9ad300932f82262cbb39'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate446.py)" = '0a09826e539b51aebf720e3d39b7a1ba9aee733b'
+          echo 'C462_MASTER_PLAN_PREFLIGHT_AND_FULL_AFFECTED_LAYER_AUDIT=PASS'
+
+      - name: Resolve and acquire exact Bugatti
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          m=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not m: raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(m.group(1))
+          PY
+            )"
+          fi
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
+          assert d.get('version')=='3.3.20-generic-autonomous-battle-c462-access', d
+          a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
+          assert isinstance(a.get('signedUrl'),str) and a['signedUrl'].startswith('https://')
+          PY
+          BUGATTI_SOURCE_URL="$(python3 - <<'PY'
+          import json
+          print(json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))['asset']['signedUrl'])
+          PY
+          )"
+          echo "::add-mask::$BUGATTI_SOURCE_URL"
+          echo "BUGATTI_SOURCE_URL=$BUGATTI_SOURCE_URL" >> "$GITHUB_ENV"
+          export BUGATTI_SOURCE_URL
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee c462-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' c462-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+          echo 'C462_EXACT_BUGATTI_ACCESS=PASS'
+
+      - name: Build intent-only continuous battle fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate446_g07.py --bugatti-primary "$BUGATTI_PRIMARY" | tee c462-fixtures.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_FIXTURES_PASS' c462-fixtures.log
+          SRC=artifacts/generic-battle-runtime-v1-candidate446-g07
+          DST=artifacts/generic-autonomous-battle-c462
+          mkdir -p "$DST/exact-bugatti" "$DST/generic-hypercar"
+          for NAME in exact-bugatti generic-hypercar; do
+            cp "$SRC/$NAME/request.json" "$DST/$NAME/request.json"
+            cp "$SRC/$NAME/asset-map.json" "$DST/$NAME/asset-map.json"
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path("artifacts/generic-autonomous-battle-c462")
+          summary={}
+          for name in ("exact-bugatti","generic-hypercar"):
+              path=root/name/"request.json"
+              data=json.loads(path.read_text(encoding="utf-8"))
+              changed=[]
+              for event in data["battlePlan"]["events"]:
+                  req=event.get("physicsRequirements") or {}
+                  if int(req.get("minQualifiedContacts") or 0) >= 1:
+                      damage=event.setdefault("damage",{})
+                      damage["required"]=True
+                      damage["persistent"]=True
+                      changed.append(event["eventId"])
+              assert len(changed) >= 2, (name, changed)
+              path.write_text(json.dumps(data,indent=2,sort_keys=True),encoding="utf-8")
+              summary[name]=changed
+          out={
+              "contract":"ISS_GENERIC_DAMAGE_INTENT_ACCEPTANCE_V1",
+              "storySuppliesOnlyDamageIntent":True,
+              "exactImpactEnergyTarget":False,
+              "exactImpactSpeedTarget":False,
+              "collisionPointTarget":False,
+              "perAssetTuning":False,
+              "contactBearingEventsRequireDamage":summary,
+          }
+          (root/"c462-damage-intent-contract.json").write_text(json.dumps(out,indent=2,sort_keys=True),encoding="utf-8")
+          print(json.dumps(out,sort_keys=True))
+          PY
+          echo 'C462_INTENT_ONLY_DAMAGE_REQUIRED_CONTINUOUS_FIXTURES=PASS'
+
+      - name: Install exact Blender runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors \
+            "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+            -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee c462-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" c462-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run exact Bugatti C462 battle
+        timeout-minutes: 14
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-autonomous-battle-c462/exact-bugatti
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
+            2>&1 | tee c462-bugatti-runtime.log
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_C462_ENGINEERING_READY' c462-bugatti-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' c462-bugatti-runtime.log
+          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_V3_APPLIED' c462-bugatti-runtime.log
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_V4_EVIDENCE_WRITTEN' c462-bugatti-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' c462-bugatti-runtime.log
+          grep -q 'G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN' c462-bugatti-runtime.log
+          grep -q '"success": true' c462-bugatti-runtime.log
+
+      - name: Run generic hypercar C462 battle
+        timeout-minutes: 14
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-autonomous-battle-c462/generic-hypercar
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 \
+            --python blender/run_generic_battle_runtime_v1_candidate461_generic_battle.py -- \
+            --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" \
+            2>&1 | tee c462-generic-runtime.log
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_C462_ENGINEERING_READY' c462-generic-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' c462-generic-runtime.log
+          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_V3_APPLIED' c462-generic-runtime.log
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_V4_EVIDENCE_WRITTEN' c462-generic-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' c462-generic-runtime.log
+          grep -q 'G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN' c462-generic-runtime.log
+          grep -q '"success": true' c462-generic-runtime.log
+
+      - name: Strict C462 cross-gate machine acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-autonomous-battle-c462
+          python3 tools/validate_generic_autonomous_battle_c462_result.py \
+            --bugatti-battle "$ROOT/exact-bugatti/generic-autonomous-battle-v4-evidence.json" \
+            --bugatti-g06 "$ROOT/exact-bugatti/g06-persistence-evidence.json" \
+            --bugatti-g07 "$ROOT/exact-bugatti/g07-causal-drama-evidence.json" \
+            --bugatti-g08 "$ROOT/exact-bugatti/g08-camera-evidence.json" \
+            --generic-battle "$ROOT/generic-hypercar/generic-autonomous-battle-v4-evidence.json" \
+            --generic-g06 "$ROOT/generic-hypercar/g06-persistence-evidence.json" \
+            --generic-g07 "$ROOT/generic-hypercar/g07-causal-drama-evidence.json" \
+            --generic-g08 "$ROOT/generic-hypercar/g08-camera-evidence.json" | tee c462-machine.log
+          grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C462_MACHINE_ACCEPTANCE"' c462-machine.log
+          grep -q '"status": "PASS"' c462-machine.log
+          grep -q '"actorScopedContinuousBattleMemory": true' c462-machine.log
+          grep -q '"historicalContactObservedBeforeCurrentEventContact": true' c462-machine.log
+          grep -q '"breakBeforeRepositionBeforeCounter": true' c462-machine.log
+          grep -q '"payoffTerminatesRecovery": true' c462-machine.log
+          grep -q '"secondNativeContact": "PASS"' c462-machine.log
+          grep -q '"visibleCausalDamageDebris": "PASS"' c462-machine.log
+          grep -q '"debrisEligibilityUsesEarnedDamageConsequence": true' c462-machine.log
+          grep -q '"humanCinematicAcceptance": "PENDING"' c462-machine.log
+          echo 'ISS_GENERIC_AUTONOMOUS_BATTLE_C462_MACHINE_ACCEPTANCE=PASS_HUMAN_REVIEW_PENDING'
+
+      - name: Write C462 acceptance manifest
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,os
+          root=pathlib.Path('artifacts/generic-autonomous-battle-c462'); root.mkdir(parents=True,exist_ok=True)
+          out={
+            'candidate':'ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_6_2_GENERIC_AUTONOMOUS_BATTLE',
+            'mechanism':'ISS_GENERIC_AUTONOMOUS_BATTLE_MECHANISM_V4',
+            'fullAffectedLayerAudit':'C460_FULL_AFFECTED_LAYER_AUDIT_20260917',
+            'battleSignalScope':'ACTOR_INVOLVEMENT_EVENT_HISTORY_V1',
+            'autonomyStateScope':'CURRENT_EVENT_ONLY',
+            'payoffTerminatesRecovery':True,
+            'damageIntentAdaptiveRetry':True,
+            'battleSchemaDamageIntentOnly':True,
+            'debrisEligibilityUsesEarnedDamageConsequence':True,
+            'headSha':os.environ.get('GITHUB_SHA'),
+            'propertyAcceptance':'PASS',
+            'machineAcceptance':'PASS_IF_MACHINE_STEP_SUCCEEDED',
+            'humanCinematicAcceptance':'PENDING_FRESH_REVIEW',
+            'scopePostflight':'PENDING_AFTER_MACHINE_AND_HUMAN_REVIEW',
+            'g04ToG08FormalClosure':False,
+            'productionReadyClaimed':False,
+          }
+          (root/'c462-acceptance-manifest.json').write_text(json.dumps(out,indent=2,sort_keys=True),encoding='utf-8')
+          PY
+
+      - name: Upload Candidate 4.6.2 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: iss-generic-autonomous-battle-c462-${{ github.run_id }}
+          path: |
+            c462-*.log
+            artifacts/generic-autonomous-battle-c462
+            artifacts/visual-vnext-rc2-preflight/asset-access.json
+          if-no-files-found: warn
+          retention-days: 30
