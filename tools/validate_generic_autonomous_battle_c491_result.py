@@ -24,6 +24,7 @@ from blender.iss_battle_runtime_certified_navigation_continuity_v1 import (
 
 CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_9_1_GENERIC_AUTONOMOUS_BATTLE"
 FAILURE_FAMILY = "DUPLICATE_ACTUAL_GOAL_READINESS_REOPENS_FULL_RUNWAY_AFTER_REALIZED_APPROACH_CERTIFICATION"
+DUPLICATE_READINESS_INVALIDATIONS = frozenset({"TACTIC_NOT_CONTACT_DIRECTED", "LIVE_READINESS_LOST"})
 
 
 def _frame(row: dict[str, Any]) -> int:
@@ -54,10 +55,12 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
 
     for field in (
         "certificateNavigationOwnershipAfterQualification",
+        "certificateLiveReadinessContinuityAfterQualification",
         "incomingPlannerContactCommitStillRequired",
         "incomingContactDirectedModeStillRequired",
         "sameTransactionStillRequired",
         "recoveryPreemptsCertificateContinuity",
+        "preQualificationReadinessUnchanged",
         "c488CertificateMissInvalidationPreserved",
         "c488CertificateRecoveryInvalidationPreserved",
         "c484TranslationDominantAlignmentPreserved",
@@ -93,7 +96,6 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
     assert latches, "C491_HANDOFF_LATCH_NOT_OBSERVED"
     assert contacts, "C491_NATIVE_CONTACT_NOT_OBSERVED"
 
-    valid: list[tuple[str, str, str]] = []
     continuity_to_handoff: list[dict[str, object]] = []
     for start in engaged:
         key = _key(start)
@@ -112,14 +114,14 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
         request = min(candidates, key=_frame)
         request_frame = _frame(request)
 
-        # This is the exact C490 failure family: after a certificate was already
-        # earned, C487 reopened RUNWAY_REOPEN and C488 invalidated it as
-        # TACTIC_NOT_CONTACT_DIRECTED. C491 must close that path before the handoff.
+        # C490 exposed two equivalent ways the duplicate C487 readiness signal can
+        # destroy an already-earned C488 certificate. C491 must close both while
+        # continuity legitimately owns the same contact-directed transaction.
         bad_invalidations = [
             r for r in invalidated
             if _key(r) == key
             and start_frame <= _frame(r) <= request_frame
-            and str(r.get("reason") or "") == "TACTIC_NOT_CONTACT_DIRECTED"
+            and str(r.get("reason") or "") in DUPLICATE_READINESS_INVALIDATIONS
         ]
         bad_runway_reopen = [
             r for r in transitions
@@ -127,8 +129,12 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
             and start_frame <= _frame(r) <= request_frame
             and str(r.get("phase") or "") == "RUNWAY_REOPEN"
         ]
-        assert not bad_invalidations, ("C491_CERTIFICATE_INVALIDATED_BY_DUPLICATE_READINESS", key, bad_invalidations)
-        assert not bad_runway_reopen, ("C491_DUPLICATE_READINESS_REOPENED_RUNWAY", key, bad_runway_reopen)
+        assert not bad_invalidations, (
+            "C491_CERTIFICATE_INVALIDATED_BY_DUPLICATE_READINESS", key, bad_invalidations
+        )
+        assert not bad_runway_reopen, (
+            "C491_DUPLICATE_READINESS_REOPENED_RUNWAY", key, bad_runway_reopen
+        )
 
         latch_rows = [
             r for r in latches
@@ -149,7 +155,6 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
             "C491_CERTIFICATE_CONTINUITY_ORDER_INVALID", key,
             qualified_frame, start_frame, request_frame, latch_frame, contact_frame,
         )
-        valid.append(key)
         continuity_to_handoff.append({
             "eventId": key[0],
             "attackerId": key[1],
@@ -162,7 +167,10 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
         })
 
     counter = [row for row in continuity_to_handoff if row["eventId"] == "evt-counterattack"]
-    assert counter, ("C491_COUNTERATTACK_CERTIFIED_CONTINUITY_TO_NATIVE_CONTACT_NOT_PROVEN", continuity_to_handoff)
+    assert counter, (
+        "C491_COUNTERATTACK_CERTIFIED_CONTINUITY_TO_NATIVE_CONTACT_NOT_PROVEN",
+        continuity_to_handoff,
+    )
 
     climax = _rows(rows, "G07_CAUSAL_CLIMAX_STATE_REALIZED")
     salience = _rows(rows, "G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN")
@@ -171,12 +179,12 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
     assert salience, "C491_G08_SALIENCE_EVIDENCE_NOT_WRITTEN"
     assert runtime_result and any(r.get("success") is True for r in runtime_result), runtime_result
 
-    # If a recoverable G05 NACK happens in this run, it must still prove C489's
-    # full release -> recovery -> fresh handoff -> native-contact transaction.
+    # If a recoverable G05 NACK occurs, C489's full release -> recovery -> fresh
+    # handoff -> native-contact transaction remains mandatory. If not exercised in
+    # this physical run, C490's exact-source composition remains a regression asset.
     releases = _rows(rows, "G04_G05_NEGATIVE_ACK_HANDOFF_RELEASED")
-    nack_proof: dict[str, object]
     if releases:
-        nack_proof = c489.c489_runtime_proof(log_path)
+        nack_proof: dict[str, object] = c489.c489_runtime_proof(log_path)
     else:
         nack_proof = {
             "g05NegativeAckCurrentRun": "NOT_EXERCISED",
@@ -186,7 +194,10 @@ def c491_runtime_proof(log_path: str) -> dict[str, object]:
     inherited_c488 = c488.c488_runtime_proof(log_path)
     return {
         "certifiedNavigationContinuityRuntimeReceipt": "PASS",
+        "certificateLiveReadinessContinuityRuntimeReceipt": "PASS",
+        "preQualificationReadinessUnchanged": True,
         "duplicateReadinessRunwayReopenClosed": "PASS",
+        "duplicateReadinessCertificateInvalidationClosed": "PASS",
         "sameCertificateContinuityToHandoff": "PASS",
         "counterattackCertifiedContinuityToNativeContact": "PASS",
         "counterattackContinuityTransactions": counter,
