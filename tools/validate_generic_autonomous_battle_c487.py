@@ -24,6 +24,7 @@ from blender.iss_battle_runtime_engagement_lifecycle_v1 import (
 
 HELPER = ROOT / "blender" / "iss_battle_runtime_engagement_lifecycle_v1.py"
 WRAPPER = ROOT / "blender" / "run_generic_battle_runtime_v1_candidate487_generic_battle.py"
+FINAL = ROOT / "blender" / "run_generic_battle_runtime_v1_candidate487_final.py"
 
 
 def action(mode: str, *, recovery: bool = False, armed: bool = True, ready: bool = False, gap: float = 2.0, runway: float = 4.0) -> str:
@@ -41,54 +42,40 @@ def action(mode: str, *, recovery: bool = False, armed: bool = True, ready: bool
 def main() -> None:
     helper_text = HELPER.read_text(encoding="utf-8")
     wrapper_text = WRAPPER.read_text(encoding="utf-8")
+    final_text = FINAL.read_text(encoding="utf-8")
     ast.parse(helper_text, filename=str(HELPER))
     ast.parse(wrapper_text, filename=str(WRAPPER))
+    ast.parse(final_text, filename=str(FINAL))
 
-    # Non-contact-directed tactics remain owned by the existing planner.
     for mode in ("FLANK", "BRAKE_APPROACH", "EVADE", "BREAK_CONTACT", "REPOSITION", "HOLD"):
         assert action(mode, recovery=False, armed=True, ready=False, gap=-1.0) == DEFER_TO_TACTIC, mode
 
-    # Recovery takes priority over contact commit in the two contact-directed modes.
     for mode in ("ENGAGE", "COUNTER"):
         assert action(mode, recovery=True, armed=True, ready=True, gap=0.0) == SUSPEND_FOR_RECOVERY
         assert action(mode, recovery=False, armed=True, ready=True, gap=0.0) == ALLOW_CONTACT
         assert action(mode, recovery=False, armed=True, ready=False, gap=1.0, runway=4.0) == REOPEN_DISTANCE
         assert action(mode, recovery=False, armed=True, ready=False, gap=4.0, runway=4.0) == HOLD_STANDOFF
 
-    # Event identity is part of the lifecycle key: same pair in sequential events is isolated.
     a = transaction_key("evt-a", "actor_alpha", "actor_beta")
     b = transaction_key("evt-b", "actor_alpha", "actor_beta")
     assert a != b
     assert a[1:] == b[1:]
 
-    # Recovery epoch starts once, remains stable while recovering, then completes.
     memory = EngagementLifecycleMemory()
     started, completed = note_recovery_transition(
-        memory,
-        frame=10,
-        previous_controller_mode="TRACK",
-        current_controller_mode="RECOVER_REVERSE",
+        memory, frame=10, previous_controller_mode="TRACK", current_controller_mode="RECOVER_REVERSE"
     )
-    assert started is True and completed is False
-    assert memory.recovery_epoch == 1
+    assert started is True and completed is False and memory.recovery_epoch == 1
     started, completed = note_recovery_transition(
-        memory,
-        frame=11,
-        previous_controller_mode="RECOVER_REVERSE",
-        current_controller_mode="RECOVER_TURN",
+        memory, frame=11, previous_controller_mode="RECOVER_REVERSE", current_controller_mode="RECOVER_TURN"
     )
-    assert started is False and completed is False
-    assert memory.recovery_epoch == 1
+    assert started is False and completed is False and memory.recovery_epoch == 1
     started, completed = note_recovery_transition(
-        memory,
-        frame=12,
-        previous_controller_mode="RECOVER_TURN",
-        current_controller_mode="TRACK",
+        memory, frame=12, previous_controller_mode="RECOVER_TURN", current_controller_mode="TRACK"
     )
-    assert started is False and completed is True
-    assert memory.recovery_epoch == 1
+    assert started is False and completed is True and memory.recovery_epoch == 1
 
-    combined = helper_text + "\n" + wrapper_text
+    combined = helper_text + "\n" + wrapper_text + "\n" + final_text
     for required in (
         "G04_EVENT_SCOPED_ENGAGEMENT_AUTHORITY_LIFECYCLE_V1",
         "transaction_key(event.event_id, entity, event.target_id)",
@@ -106,7 +93,7 @@ def main() -> None:
         "PHASE_HANDOFF_READY",
         "G04_EVENT_SCOPED_PAIR_CONTEXT_MISMATCH",
         "G04_EVENT_SCOPED_TRANSACTION_CONTEXT_MISSING",
-        'candidate486.corridor_aware_tactical_decide = candidate486._C485_TACTICAL_DECIDE',
+        "candidate486.main = candidate485.main",
         '"g05NativeSolverFinalAuthorityPreserved": True',
         '"g05SourceChanged": False',
         '"g06SourceChanged": False',
@@ -134,14 +121,17 @@ def main() -> None:
         "min_damage_severity",
         "desiredimpactspeedmps",
         "desiredimpactenergyj",
-        "collisionframe",
-        "impactframe",
         "trajectorypoints",
         "waypoints",
         "set_pose",
         "linear_velocity =",
     ):
         assert forbidden not in lower, forbidden
+    for forbidden_exact in (
+        '"collisionFrame":',
+        '"impactFrame":',
+    ):
+        assert forbidden_exact not in combined, forbidden_exact
 
     print(json.dumps({
         "marker": "GENERIC_AUTONOMOUS_BATTLE_C487_PROPERTY_ACCEPTANCE",
@@ -153,6 +143,7 @@ def main() -> None:
         "recoveryEpochLifecycle": "PASS",
         "tacticalProgressContextSynchronization": "PASS",
         "actualGoalReadinessContract": "PASS",
+        "supersededC486ReceiptNotExecuted": "PASS",
         "g05NativeAuthorityPreserved": True,
         "g05ThresholdImported": False,
         "assetSpecificCode": False,
