@@ -23,7 +23,7 @@ env:
   BLENDER_VERSION: '4.5.13'
   EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
   ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
-  ASSET_ACCESS_EXPECTED_VERSION: '3.3.29-generic-autonomous-battle-c470-access'
+  ASSET_ACCESS_EXPECTED_VERSION: '3.3.31-generic-autonomous-battle-c472-access'
   ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
   SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
 
@@ -192,6 +192,7 @@ jobs:
           echo 'C472_UNCHANGED_INTENT_ONLY_FIXTURES=PASS'
 
       - name: Install exact Blender 4.5.13
+        id: install_blender
         shell: bash
         run: |
           set -euo pipefail
@@ -223,14 +224,13 @@ jobs:
           grep -q '"success": true' c472-bugatti-runtime.log
 
       - name: Run generic hypercar C472 battle
-        if: always()
+        if: always() && steps.install_blender.outcome == 'success'
         timeout-minutes: 14
         shell: bash
         env:
           PYTHONUNBUFFERED: '1'
         run: |
           set -euo pipefail
-          test -n "${BLENDER_BIN:-}"
           D=artifacts/generic-autonomous-battle-c472/generic-hypercar
           "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate472_generic_battle.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee c472-generic-runtime.log
           grep -q 'GENERIC_AUTONOMOUS_BATTLE_C472_ENGINEERING_READY' c472-generic-runtime.log
