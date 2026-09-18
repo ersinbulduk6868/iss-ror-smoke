@@ -6,6 +6,7 @@ on:
     branches: [iss-engineering/generic-battle-c470-surface-transaction]
     paths:
       - '.github/workflows/generic-autonomous-battle-c470-run.yml'
+      - 'blender/run_generic_battle_runtime_v1_candidate470_generic_battle.py'
 
 concurrency:
   group: iss-generic-autonomous-battle-c470-run
@@ -50,6 +51,16 @@ jobs:
             tools/validate_generic_autonomous_battle_c469.py \
             tools/validate_generic_autonomous_battle_c470.py \
             tools/validate_generic_autonomous_battle_c470_result.py
+
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('blender/run_generic_battle_runtime_v1_candidate470_generic_battle.py')
+          text=p.read_text(encoding='utf-8')
+          assert 'REPO_ROOT = Path(__file__).resolve().parents[1]' in text
+          assert 'sys.path.insert(0, str(REPO_ROOT))' in text
+          assert text.index('sys.path.insert(0, str(REPO_ROOT))') < text.index('from blender import iss_battle_runtime_generic_battle_v6')
+          print('C470_BLENDER_LAUNCHER_BOOTSTRAP=PASS')
+          PY
 
           python3 tools/validate_generic_autonomous_battle_c467.py | tee c470-c467-property.log
           grep -q '"status": "PASS"' c470-c467-property.log
