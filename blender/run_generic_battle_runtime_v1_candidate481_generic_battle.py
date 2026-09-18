@@ -43,6 +43,7 @@ def defer_progress_aware_base_autonomy_update(
     effective_gap = pair.get("effectiveCollisionProxyGapM")
     handoff_gap = ClosedLoopGoalController.contact_handoff_gap(obs)
     timeout = ClosedLoopGoalController.progress_timeout_frames(obs)
+    previous_progress_frame = int(memory.last_progress_frame)
 
     if deferred_handoff_stalled(
         handoff_deferred=deferred,
@@ -50,7 +51,7 @@ def defer_progress_aware_base_autonomy_update(
         existing_handoff_gap_m=float(handoff_gap),
         last_command_speed_mps=float(memory.last_command_speed_mps),
         frame=int(obs.frame),
-        last_progress_frame=int(memory.last_progress_frame),
+        last_progress_frame=previous_progress_frame,
         progress_timeout_frames=int(timeout),
         controller_mode=str(memory.mode or ""),
     ):
@@ -66,7 +67,7 @@ def defer_progress_aware_base_autonomy_update(
             "targetId": pair_key[1] or None,
             "effectiveCollisionProxyGapM": float(effective_gap),
             "existingHandoffGapM": float(handoff_gap),
-            "lastProgressFrame": int(memory.last_progress_frame),
+            "previousLastProgressFrame": previous_progress_frame,
             "progressTimeoutFrames": int(timeout),
             "model": MECHANISM,
         }
