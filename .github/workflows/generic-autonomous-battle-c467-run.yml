@@ -101,7 +101,7 @@ jobs:
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
           assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
           assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
-          assert d.get('version')=='3.3.26-generic-autonomous-battle-c467-access', d
+          assert d.get('version')=='3.3.27-generic-autonomous-battle-c468-access', d
           a=d['asset']
           assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'], a
           assert int(a['expectedBytes'])==31576440, a
