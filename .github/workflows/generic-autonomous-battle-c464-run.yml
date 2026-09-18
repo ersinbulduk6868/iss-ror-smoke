@@ -67,7 +67,7 @@ jobs:
           test "$(git hash-object blender/iss_battle_runtime_consequences_v2.py)" = 'e011a10fee24802c13a1be22d66efe76c406c2c0'
           test "$(git hash-object blender/iss_battle_runtime_consequences_v3.py)" = 'b13a06eb50884299e5a3d083897e1a70d75aad34'
           test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate464_generic_battle.py)" = '0f31a2ac1d52c278e76c097998913344d8abee8a'
-          test "$(git hash-object tools/validate_generic_autonomous_battle_c464.py)" = 'c0cf0c164c2781673f2cbf50351b814486bd1fd6'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c464.py)" = '05f59c038d3c1f205bd43982615046ffb5dacb83'
           test "$(git hash-object tools/validate_generic_autonomous_battle_c464_result.py)" = '295d5a45206f062bc8f63dd580a31a912e461ee0'
 
           test "$(git hash-object blender/iss_battle_runtime_contract.py)" = '17860a4945d41316793e2a807585d8486a8e65ef'
