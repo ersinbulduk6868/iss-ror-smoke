@@ -31,8 +31,8 @@ def main() -> None:
     for name, text in (("helper", helper), ("wrapper", wrapper), ("c487", c487), ("c488", c488), ("c490", c490)):
         ast.parse(text, filename=name)
 
-    # Pure ownership truth table. A certificate cannot seize navigation unless the
-    # same transaction is active and the upstream planner itself remains committed.
+    # Ownership can exist only after qualification, on the same active transaction,
+    # while the upstream planner remains contact-directed+committed and recovery is off.
     assert certified_approach_owns_navigation(
         transaction_active=True,
         certificate_qualified=True,
@@ -56,18 +56,23 @@ def main() -> None:
     ):
         assert not certified_approach_owns_navigation(**kwargs), kwargs
 
-    # C491 must compose above C487 actual-goal readiness but below the already
-    # proven C488/C490 authority and observation chain.
+    # C491 composes at both duplicate readiness ownership points: C487 may not
+    # reopen the runway once continuity owns navigation, and C488 may not discard
+    # that same qualified certificate solely because the duplicate live-readiness
+    # sample is transiently false. Initial qualification remains untouched.
     assert "candidate487.actual_goal_lifecycle_goal_for_tactical = (" in wrapper
+    assert "candidate488.update_approach_certificate = c491_update_approach_certificate" in wrapper
+    assert "candidate488.authority_action = c491_authority_action" in wrapper
+    assert "id(memory) in _continuity_certificate_ids" in wrapper
+    assert "kwargs[\"live_readiness\"] = True" in wrapper
+    assert "memory.qualified" in wrapper
     assert "candidate490.main()" in wrapper
     assert "candidate487._BASE_GOAL_FOR_TACTICAL(" in wrapper
     assert "_ORIGINAL_C487_ACTUAL_GOAL(actor, target, event, tactical, actors)" in wrapper
     assert "G04_CERTIFIED_APPROACH_NAVIGATION_CONTINUITY_ENGAGED" in wrapper
     assert "G04_CERTIFIED_APPROACH_NAVIGATION_CONTINUITY_RELEASED" in wrapper
 
-    # Historical protective layers remain present and untouched in predecessor
-    # source: C487 runway/recovery, C488 miss/recovery invalidation + C484 alignment,
-    # and C490 final Candidate471 composition binding.
+    # Historical safeguards remain present and unchanged in predecessor source.
     assert "ACTUAL_GOAL_READINESS_RUNWAY_REOPEN" in c487
     assert "SUSPEND_FOR_RECOVERY" in c487
     assert "G04_EVENT_SCOPED_RECOVERY_REPLAN_PROPAGATED" in c487
@@ -77,17 +82,12 @@ def main() -> None:
     assert "candidate471._ORIGINAL_PAIRWISE_RECEIPT = candidate489.c489_observed_pairwise_receipt" in c490
     assert "candidate489._ObservedPairwiseSolverResponseOracle.evaluate" in c490
 
-    # C491 may observe tactical state, but must never rewrite it or its contact
-    # commit. This keeps the upstream planner's decision authoritative.
+    # C491 may observe tactical state, but must never rewrite it or its contact commit.
     tree = ast.parse(wrapper)
     forbidden_tactical_assignments: list[str] = []
     for node in ast.walk(tree):
         if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
-            targets = []
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-            else:
-                targets = [node.target]
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             for target in targets:
                 if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "tactical":
                     if target.attr in {"mode", "contact_commit", "speed_intent", "speed_scale", "forward_offset_scale", "lateral_offset_scale"}:
@@ -96,10 +96,12 @@ def main() -> None:
 
     required_true = (
         '"certificateNavigationOwnershipAfterQualification": True',
+        '"certificateLiveReadinessContinuityAfterQualification": True',
         '"incomingPlannerContactCommitStillRequired": True',
         '"incomingContactDirectedModeStillRequired": True',
         '"sameTransactionStillRequired": True',
         '"recoveryPreemptsCertificateContinuity": True',
+        '"preQualificationReadinessUnchanged": True',
         '"c488CertificateMissInvalidationPreserved": True',
         '"c488CertificateRecoveryInvalidationPreserved": True',
         '"c484TranslationDominantAlignmentPreserved": True',
@@ -155,6 +157,9 @@ def main() -> None:
         "mechanism": CERTIFIED_NAVIGATION_CONTINUITY_MODEL,
         "failureFamily": "DUPLICATE_ACTUAL_GOAL_READINESS_REOPENS_FULL_RUNWAY_AFTER_REALIZED_APPROACH_CERTIFICATION",
         "ownershipTruthTable": "PASS",
+        "navigationOwnershipBinding": "PASS",
+        "certificateReadinessContinuityBinding": "PASS",
+        "preQualificationReadinessUnchanged": True,
         "plannerAuthorityPreserved": True,
         "recoveryPreemptionPreserved": True,
         "certificateMissInvalidationPreserved": True,
