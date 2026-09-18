@@ -98,93 +98,36 @@ def _runway_sequence(profile: str) -> dict[str, object]:
     runway = GenericBattleTacticalPlanner.engagement_runway_required(probe)
     assert runway > 1.5
 
-    low = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=1, surface_gap_m=runway * 0.25, **base),
-        symmetry_bias=1.0,
-    )
-    assert low.mode == "OPEN_DISTANCE"
-    assert low.speed_intent == "REVERSE"
-    assert low.contact_commit is False
+    low = GenericBattleTacticalPlanner.decide(memory, _obs(frame=1, surface_gap_m=runway * 0.25, **base), symmetry_bias=1.0)
+    assert low.mode == "OPEN_DISTANCE" and low.speed_intent == "REVERSE" and low.contact_commit is False
     assert abs(low.stand_off_surface_gap_m - runway) < 1.0e-9
 
-    armed = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=20, surface_gap_m=runway + 0.2, **base),
-        symmetry_bias=1.0,
-    )
-    assert armed.mode == "ENGAGE"
-    assert armed.contact_commit is True
-    assert memory.engagement_runway_armed is True
+    armed = GenericBattleTacticalPlanner.decide(memory, _obs(frame=20, surface_gap_m=runway + 0.2, **base), symmetry_bias=1.0)
+    assert armed.mode == "ENGAGE" and armed.contact_commit is True and memory.engagement_runway_armed is True
 
-    contact = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=30, contact_count=1, surface_gap_m=0.10, **base),
-        symmetry_bias=1.0,
-    )
-    assert contact.mode == "BREAK_CONTACT"
-    assert memory.separation_required_m >= runway
-    assert contact.stand_off_surface_gap_m >= runway
+    contact = GenericBattleTacticalPlanner.decide(memory, _obs(frame=30, contact_count=1, surface_gap_m=0.10, **base), symmetry_bias=1.0)
+    assert contact.mode == "BREAK_CONTACT" and memory.separation_required_m >= runway and contact.stand_off_surface_gap_m >= runway
 
-    still_close = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=31, contact_count=1, surface_gap_m=runway * 0.50, **base),
-        symmetry_bias=1.0,
-    )
+    still_close = GenericBattleTacticalPlanner.decide(memory, _obs(frame=31, contact_count=1, surface_gap_m=runway * 0.50, **base), symmetry_bias=1.0)
     assert still_close.mode == "BREAK_CONTACT"
 
-    separated = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=40, contact_count=1, surface_gap_m=runway + 0.35, **base),
-        symmetry_bias=1.0,
-    )
-    assert separated.mode == "REPOSITION"
-    assert memory.separation_achieved is True
+    separated = GenericBattleTacticalPlanner.decide(memory, _obs(frame=40, contact_count=1, surface_gap_m=runway + 0.35, **base), symmetry_bias=1.0)
+    assert separated.mode == "REPOSITION" and memory.separation_achieved is True
 
-    collapsed = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=41, contact_count=1, surface_gap_m=runway * 0.70, **base),
-        symmetry_bias=1.0,
-    )
-    assert collapsed.mode == "BREAK_CONTACT"
-    assert memory.separation_achieved is False
-    assert memory.engagement_runway_armed is False
+    collapsed = GenericBattleTacticalPlanner.decide(memory, _obs(frame=41, contact_count=1, surface_gap_m=runway * 0.70, **base), symmetry_bias=1.0)
+    assert collapsed.mode == "BREAK_CONTACT" and memory.separation_achieved is False and memory.engagement_runway_armed is False
 
-    reestablished = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=50, contact_count=1, surface_gap_m=runway + 0.40, **base),
-        symmetry_bias=-1.0,
-    )
+    reestablished = GenericBattleTacticalPlanner.decide(memory, _obs(frame=50, contact_count=1, surface_gap_m=runway + 0.40, **base), symmetry_bias=-1.0)
     assert reestablished.mode == "REPOSITION"
     counter_frame = memory.reposition_until_frame + 1
     counter = GenericBattleTacticalPlanner.decide(
         memory,
-        _obs(
-            frame=counter_frame,
-            phase="COUNTERATTACK",
-            story_tactic="COUNTER",
-            contact_count=1,
-            surface_gap_m=runway + 0.30,
-            **base,
-        ),
+        _obs(frame=counter_frame, phase="COUNTERATTACK", story_tactic="COUNTER", contact_count=1, surface_gap_m=runway + 0.30, **base),
         symmetry_bias=-1.0,
     )
-    assert counter.mode == "COUNTER"
-    assert counter.contact_commit is True
+    assert counter.mode == "COUNTER" and counter.contact_commit is True
 
-    return {
-        "runwayM": runway,
-        "modes": [
-            low.mode,
-            armed.mode,
-            contact.mode,
-            still_close.mode,
-            separated.mode,
-            collapsed.mode,
-            reestablished.mode,
-            counter.mode,
-        ],
-    }
+    return {"runwayM": runway, "modes": [low.mode, armed.mode, contact.mode, still_close.mode, separated.mode, collapsed.mode, reestablished.mode, counter.mode]}
 
 
 def _history_scope() -> dict[str, object]:
@@ -201,42 +144,18 @@ def _history_scope() -> dict[str, object]:
     b_contacts, b_damage, b_events = actor_realized_event_signals("B", events, states)
     assert (b_contacts, b_damage) == (2, 0)
     assert set(b_events) == {"e-ab", "e-ba"}
-    return {
-        "actorBContactSignals": b_contacts,
-        "actorBContributingEvents": list(b_events),
-        "unrelatedActorSignalsExcluded": True,
-    }
+    return {"actorBContactSignals": b_contacts, "actorBContributingEvents": list(b_events), "unrelatedActorSignalsExcluded": True}
 
 
 def _payoff_terminal() -> None:
     memory = TacticalMemory()
     runway = GenericBattleTacticalPlanner.engagement_runway_required(_obs())
-    GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=1, surface_gap_m=runway + 0.2),
-        symmetry_bias=1.0,
-    )
-    started = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(frame=30, contact_count=1, surface_gap_m=0.10),
-        symmetry_bias=1.0,
-    )
+    GenericBattleTacticalPlanner.decide(memory, _obs(frame=1, surface_gap_m=runway + 0.2), symmetry_bias=1.0)
+    started = GenericBattleTacticalPlanner.decide(memory, _obs(frame=30, contact_count=1, surface_gap_m=0.10), symmetry_bias=1.0)
     assert started.mode == "BREAK_CONTACT"
-    payoff = GenericBattleTacticalPlanner.decide(
-        memory,
-        _obs(
-            frame=31,
-            phase="PAYOFF",
-            story_tactic="SETTLE",
-            contact_count=1,
-            surface_gap_m=0.10,
-        ),
-        symmetry_bias=1.0,
-    )
+    payoff = GenericBattleTacticalPlanner.decide(memory, _obs(frame=31, phase="PAYOFF", story_tactic="SETTLE", contact_count=1, surface_gap_m=0.10), symmetry_bias=1.0)
     assert payoff.mode == "HOLD" and payoff.speed_intent == "BRAKE"
-    assert memory.break_until_frame == 0
-    assert memory.reposition_until_frame == 0
-    assert memory.engagement_runway_armed is False
+    assert memory.break_until_frame == 0 and memory.reposition_until_frame == 0 and memory.engagement_runway_armed is False
 
 
 def _static_scope() -> None:
@@ -252,34 +171,18 @@ def _static_scope() -> None:
     control = CONTROL.read_text(encoding="utf-8")
     wrapper = WRAPPER.read_text(encoding="utf-8")
 
-    for forbidden in (
-        "MIN_DAMAGE_SEVERITY",
-        "target_toughness",
-        "impact_energy_j",
-        "desired_impact_speed",
-        "desired_impact_energy",
-        "current_event_damage_count",
-        "damage_retry_scale",
-    ):
+    for forbidden in ("MIN_DAMAGE_SEVERITY", "target_toughness", "impact_energy_j", "desired_impact_speed", "desired_impact_energy", "current_event_damage_count", "damage_retry_scale"):
         assert forbidden not in tactics, forbidden
-    assert "current_event_contact_count" not in tactics
-    assert "damage_required" not in tactics
+    assert "current_event_contact_count" not in tactics and "damage_required" not in tactics
 
-    assert "_surface_gap_goal" in control
-    assert "_support_radius" in control
-    assert "damageIntentAdaptiveRetry" not in control
-    assert "CONTACT_HANDOFF_LATCH" in control
-    assert "GENERIC_SOLVER_HANDOFF_LATCHED" in control
-    assert "GENERIC_SOLVER_HANDOFF_RELEASED" in control
-    assert "SOLVER_HANDOFF_LATCH_MODEL" in control
-    assert "nonproductiveDamageContactCount" not in control
-    assert '"damageThresholdAwareControl": False' in control
-    assert '"targetToughnessAwareControl": False' in control
-    assert '"desiredImpactSpeedControl": False' in control
-    assert '"desiredImpactEnergyControl": False' in control
+    for required in ("_surface_gap_goal", "_support_radius", "CONTACT_HANDOFF_LATCH", "GENERIC_SOLVER_HANDOFF_LATCHED", "GENERIC_SOLVER_HANDOFF_RELEASED", "SOLVER_HANDOFF_LATCH_MODEL"):
+        assert required in control, required
+    assert "damageIntentAdaptiveRetry" not in control and "nonproductiveDamageContactCount" not in control
+    for required in ('"damageThresholdAwareControl": False', '"targetToughnessAwareControl": False', '"desiredImpactSpeedControl": False', '"desiredImpactEnergyControl": False'):
+        assert required in control, required
 
     for required in (
-        'CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_6_3_GENERIC_AUTONOMOUS_BATTLE"',
+        'CANDIDATE = "ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_6_4_GENERIC_AUTONOMOUS_BATTLE"',
         '"fixtureMutationForAcceptance": False',
         '"nativeContactAuthorityPreserved": True',
         '"damageAdmissionThresholdChanged": False',
@@ -295,8 +198,7 @@ def _static_scope() -> None:
     consequence = CONSEQUENCES.read_text(encoding="utf-8")
     assert "MIN_DAMAGE_SEVERITY" not in consequence
     assert 'shard["iss_debris_trajectory_injection"] = False' in consequence
-    assert '"physicalDamageGateChanged": False' in consequence
-    assert '"contactGateChanged": False' in consequence
+    assert '"physicalDamageGateChanged": False' in consequence and '"contactGateChanged": False' in consequence
 
 
 def main() -> None:
@@ -307,50 +209,15 @@ def main() -> None:
     assert abs(motion_heading_error(-math.pi + 0.01, "REVERSE")) < 0.02
 
     assert SOLVER_HANDOFF_LATCH_MODEL == "EVENT_LOCAL_SOLVER_AUTHORITY_HANDOFF_LATCH_V1"
-    latch = SolverHandoffLatch(
-        start_frame=100,
-        contact_count_at_latch=0,
-        handoff_gap_m=0.20,
-        last_surface_gap_m=0.10,
-    )
-    held = decide_solver_handoff(
-        latch,
-        current_contact_count=0,
-        surface_gap_m=-0.03,
-        closing_speed_mps=1.2,
-        characteristic_length_m=4.5,
-    )
+    latch = SolverHandoffLatch(start_frame=100, contact_count_at_latch=0, handoff_gap_m=0.20, last_surface_gap_m=0.10)
+    held = decide_solver_handoff(latch, current_contact_count=0, surface_gap_m=-0.03, closing_speed_mps=1.2, characteristic_length_m=4.5)
     assert held.hold and held.reason == "SOLVER_AUTHORITY_LATCHED"
-    verified = decide_solver_handoff(
-        latch,
-        current_contact_count=1,
-        surface_gap_m=-0.02,
-        closing_speed_mps=-0.4,
-        characteristic_length_m=4.5,
-    )
+    verified = decide_solver_handoff(latch, current_contact_count=1, surface_gap_m=-0.02, closing_speed_mps=-0.4, characteristic_length_m=4.5)
     assert not verified.hold and verified.reason == "VERIFIED_CONTACT_OBSERVED"
-    latch2 = SolverHandoffLatch(
-        start_frame=200,
-        contact_count_at_latch=0,
-        handoff_gap_m=0.20,
-        last_surface_gap_m=0.05,
-    )
     rgap = release_gap_m(0.20, 4.5)
-    miss = decide_solver_handoff(
-        latch2,
-        current_contact_count=0,
-        surface_gap_m=rgap + 0.20,
-        closing_speed_mps=-0.5,
-        characteristic_length_m=4.5,
-    )
+    miss = decide_solver_handoff(SolverHandoffLatch(200, 0, 0.20, 0.05), current_contact_count=0, surface_gap_m=rgap + 0.20, closing_speed_mps=-0.5, characteristic_length_m=4.5)
     assert not miss.hold and miss.reason == "PHYSICAL_MISS_SEPARATING"
-    not_miss = decide_solver_handoff(
-        SolverHandoffLatch(210, 0, 0.20, 0.05),
-        current_contact_count=0,
-        surface_gap_m=rgap + 0.20,
-        closing_speed_mps=0.5,
-        characteristic_length_m=4.5,
-    )
+    not_miss = decide_solver_handoff(SolverHandoffLatch(210, 0, 0.20, 0.05), current_contact_count=0, surface_gap_m=rgap + 0.20, closing_speed_mps=0.5, characteristic_length_m=4.5)
     assert not_miss.hold
 
     sports = _runway_sequence("sports")
