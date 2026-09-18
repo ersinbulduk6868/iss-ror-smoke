@@ -69,7 +69,7 @@ jobs:
           grep -q '"fixtureMutationForAcceptance": false' c468-property.log
 
           test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate468_generic_battle.py)" = 'dccbfc97edad8df9c03f44e1f087b4a97a0cf26b'
-          test "$(git hash-object tools/validate_generic_autonomous_battle_c468.py)" = '61cc30dda7e15bbbb4d06377bc28ac2fd11b3adc'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c468.py)" = '41ae661402e473b967fef83887ecad84a5d127e1'
           test "$(git hash-object tools/validate_generic_autonomous_battle_c468_result.py)" = '5b66794ba8d55cf594a24ea069323009a4e60143'
 
           test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
