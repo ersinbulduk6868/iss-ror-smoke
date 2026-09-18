@@ -23,6 +23,8 @@ from blender.iss_battle_runtime_g05_negative_ack_v1 import (
     STAGE_OUTER,
     STAGE_SOLVER,
     G05NegativeAcknowledgement,
+    G05NegativeAckWindow,
+    negative_ack_confirmed,
     recoverable_post_handoff_nack,
 )
 
@@ -43,20 +45,11 @@ _ORIGINAL_C488_END_TRANSACTION = candidate488.c488_end_transaction
 _active_g05_context: tuple[int, str, str, str] | None = None
 _pending_nacks: dict[tuple[str, str, str], G05NegativeAcknowledgement] = {}
 _pending_recovery: dict[tuple[str, str, str], G05NegativeAcknowledgement] = {}
+_nack_windows: dict[tuple[str, str, str], G05NegativeAckWindow] = {}
 _qualified_contact_transactions: dict[tuple[str, int], tuple[str, str, str]] = {}
 _nack_rows: list[dict[str, Any]] = []
 _release_rows: list[dict[str, Any]] = []
 _recovery_rows: list[dict[str, Any]] = []
-
-
-def _context_key() -> tuple[str, str, str] | None:
-    if _active_g05_context is None:
-        return None
-    return (
-        str(_active_g05_context[1]),
-        str(_active_g05_context[2]),
-        str(_active_g05_context[3]),
-    )
 
 
 def _record_nack(
@@ -137,12 +130,7 @@ def c489_observed_pairwise_receipt(
 ) -> Any:
     global _active_g05_context
     key = (str(event.event_id), str(attacker_id), str(event.target_id or ""))
-    _active_g05_context = (
-        int(frame),
-        key[0],
-        key[1],
-        key[2],
-    )
+    _active_g05_context = (int(frame), key[0], key[1], key[2])
     try:
         verified = _ORIGINAL_PAIRWISE_RECEIPT(
             frame=frame,
@@ -156,6 +144,7 @@ def c489_observed_pairwise_receipt(
             contact_frame = int(receipt.get("contactFrame") or frame)
             _qualified_contact_transactions[(key[0], contact_frame)] = key
             _pending_nacks.pop(key, None)
+            _nack_windows.pop(key, None)
         return verified
     finally:
         _active_g05_context = None
@@ -182,11 +171,15 @@ def c489_observed_c42_marker(name: str, *args: Any, **kwargs: Any) -> Any:
     elif name == "G05_PAIRWISE_CONTACT_BOUND_TO_EXISTING_IMPACT_GATE":
         event_id = str(kwargs.get("eventId") or "")
         contact_frame = int(kwargs.get("frame") or -1)
-        _qualified_contact_transactions.pop((event_id, contact_frame), None)
+        key = _qualified_contact_transactions.pop((event_id, contact_frame), None)
+        if key is not None:
+            _pending_nacks.pop(key, None)
+            _nack_windows.pop(key, None)
     return _ORIGINAL_C42_MARKER(name, *args, **kwargs)
 
 
 def _release_recoverable_handoffs(frame: int) -> None:
+    confirmation_frames = max(1, int(candidate42.SOLVER_WINDOW_MAX_FRAMES))
     for key, nack in tuple(_pending_nacks.items()):
         if int(nack.frame) != int(frame):
             if int(nack.frame) < int(frame):
@@ -194,20 +187,47 @@ def _release_recoverable_handoffs(frame: int) -> None:
             continue
         handoff_key = (key[0], key[1])
         latch = battle_v6._handoff_latches.get(handoff_key)
-        if not recoverable_post_handoff_nack(
+        recoverable = recoverable_post_handoff_nack(
             nack,
             active_event_id=key[0],
             active_attacker_id=key[1],
             active_target_id=key[2],
             handoff_latched=latch is not None,
-        ):
+        )
+        if not recoverable:
+            _nack_windows.pop(key, None)
+            continue
+
+        window = _nack_windows.setdefault(key, G05NegativeAckWindow())
+        confirmed = negative_ack_confirmed(
+            window,
+            nack,
+            confirmation_frames=confirmation_frames,
+        )
+        if not confirmed:
+            marker(
+                "G04_G05_NEGATIVE_ACK_PENDING_CONFIRMATION",
+                frame=int(frame),
+                eventId=key[0],
+                attackerId=key[1],
+                targetId=key[2] or None,
+                stage=nack.stage,
+                reason=nack.reason,
+                consecutiveRejectFrames=int(window.consecutive_frames),
+                requiredConfirmationFrames=int(confirmation_frames),
+                model=MECHANISM,
+            )
+            _pending_nacks.pop(key, None)
             continue
 
         removed = battle_v6._handoff_latches.pop(handoff_key, None)
         if removed is None:
             continue
         cutoff_frame = candidate465.hardened._cutoff_frames.pop(handoff_key, None)
+        observed_frames = int(window.consecutive_frames)
+        first_reject_frame = window.first_frame
         _pending_nacks.pop(key, None)
+        _nack_windows.pop(key, None)
         _pending_recovery[key] = nack
         candidate487._clear_legacy_pair_state((key[1], key[2]))
         row = {
@@ -219,6 +239,9 @@ def _release_recoverable_handoffs(frame: int) -> None:
             "reason": nack.reason,
             "handoffStartFrame": int(removed.start_frame),
             "cutoffFrame": (int(cutoff_frame) if cutoff_frame is not None else None),
+            "firstRejectFrame": (int(first_reject_frame) if first_reject_frame is not None else None),
+            "consecutiveRejectFrames": observed_frames,
+            "requiredConfirmationFrames": int(confirmation_frames),
             "action": "RELEASE_HANDOFF_AND_RECOVER",
             "model": MECHANISM,
         }
@@ -310,6 +333,7 @@ def c489_event_scoped_set_controls(
 def c489_end_transaction(entity: str, key: tuple[str, str, str], frame: int) -> None:
     _pending_nacks.pop(key, None)
     _pending_recovery.pop(key, None)
+    _nack_windows.pop(key, None)
     for qkey, qtxn in tuple(_qualified_contact_transactions.items()):
         if qtxn == key:
             _qualified_contact_transactions.pop(qkey, None)
@@ -321,6 +345,7 @@ def _reset() -> None:
     _active_g05_context = None
     _pending_nacks.clear()
     _pending_recovery.clear()
+    _nack_windows.clear()
     _qualified_contact_transactions.clear()
     _nack_rows.clear()
     _release_rows.clear()
@@ -339,8 +364,8 @@ def main() -> None:
     candidate42.marker = c489_observed_c42_marker
 
     # Compose on top of C488. C489 changes no contact qualification rule: it only
-    # makes a post-handoff G05 negative acknowledgement release the failed solver
-    # transaction and enter the already-existing event-scoped recovery/replan path.
+    # makes a confirmed post-handoff G05 negative acknowledgement release the failed
+    # solver transaction and enter the established event-scoped recovery/replan path.
     candidate488.c488_goal_for_tactical = c489_goal_for_tactical
     candidate488.certified_event_scoped_autonomy_update = c489_negative_ack_autonomy_update
     candidate488.c488_end_transaction = c489_end_transaction
@@ -358,6 +383,9 @@ def main() -> None:
         "outerAuthorityNegativeAckObserved": True,
         "solverResponseNegativeAckObserved": True,
         "existingImpactGateNegativeAckObserved": True,
+        "negativeAckConfirmationUsesExistingG05SolverWindow": True,
+        "singleFrameOuterOrSolverNoiseDoesNotForceRecovery": True,
+        "existingImpactGateNegativeAckImmediate": True,
         "recoverableGeometryNackReleasesHandoff": True,
         "recoverableSolverNackReleasesHandoff": True,
         "recoverableImpactGateNackReleasesHandoff": True,
