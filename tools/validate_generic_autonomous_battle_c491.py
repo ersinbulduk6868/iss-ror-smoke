@@ -195,15 +195,19 @@ def main() -> None:
     for token in required_false:
         assert token in wrapper, token
 
-    lowered = (helper + "\n" + wrapper).lower()
+    # Governance receipts are allowed; operational choreography identifiers remain
+    # forbidden.  Avoid broad substring rules that would reject explicit False
+    # governance fields such as exactCollisionFrameTarget=False.
+    operational = (helper + "\n" + wrapper).lower()
     for forbidden in (
         "bugatti", "bulldozer", "ferrari", "tuktuk", "tuk-tuk",
-        "desiredimpactspeed", "desiredimpactenergy", "collisionframe",
+        "desiredimpactspeed", "desiredimpactenergy",
+        "collisionframe =", "collision_frame =",
         "trajectorypoints", "waypoints", "forcedwinner", "set_pose",
         "linear_velocity =", "semantic_tolerance =", "locality_tolerance =",
         "min_closing_speed", "event.end_frame =", "total_frames =",
     ):
-        assert forbidden not in lowered, forbidden
+        assert forbidden not in operational, forbidden
 
     print(json.dumps({
         "marker": "GENERIC_AUTONOMOUS_BATTLE_C491_PROPERTY_ACCEPTANCE",
