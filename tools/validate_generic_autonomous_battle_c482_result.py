@@ -16,10 +16,7 @@ if str(TOOLS) not in sys.path:
 from validate_generic_autonomous_battle_c465_result import _cutoff_runtime_proof
 from validate_generic_autonomous_battle_c470_result import _surface_transaction_runtime_proof
 from validate_generic_autonomous_battle_c471_result import _transaction_sampling_runtime_proof
-from validate_generic_autonomous_battle_c474_result import (
-    _ownership_aware_cross_gate_validate,
-    _progress_runtime_proof,
-)
+from validate_generic_autonomous_battle_c474_result import _progress_runtime_proof
 from validate_generic_autonomous_battle_c479_result import (
     direction_proof,
     load,
@@ -30,6 +27,7 @@ from validate_generic_autonomous_battle_c480_result import (
     approach_transaction_proof,
 )
 from validate_generic_autonomous_battle_c481_result import deferred_handoff_recovery_proof
+from validate_generic_heterogeneous_cross_gate_v1 import heterogeneous_cross_gate_proof
 
 
 def collision_role_runtime_proof(log_path: str) -> dict[str, object]:
@@ -76,7 +74,7 @@ def main() -> None:
     g06 = load(a.hetero_g06)
     directions = direction_proof(g06)
 
-    cross_gate = _ownership_aware_cross_gate_validate(
+    cross_gate = heterogeneous_cross_gate_proof(
         "generic-hypercar-production-ready-heavy-asset",
         a.hetero_battle,
         a.hetero_g06,
@@ -112,8 +110,9 @@ def main() -> None:
         "transactionBoundedLocalityWindow": "PASS",
         "livePairSurfaceSemanticSelection": "PASS",
         "secondNativeContact": "PASS",
-        "twoSidedDamage": "PASS",
-        "damageThresholdSemantics": "PASS",
+        "heterogeneousDamageOutcome": cross_gate["damageOutcomeMode"],
+        "damageThresholdSemantics": cross_gate["damageThresholdSemantics"],
+        "g04DoesNotTargetG06DamageThreshold": cross_gate["g04DoesNotTargetG06DamageThreshold"],
         "visibleCausalDamageDebris": "PASS",
         "g07AdaptiveCausalDrama": "PASS",
         "g08MachineObservability": "PASS",
