@@ -1,0 +1,230 @@
+name: ISS Generic Autonomous Battle Candidate 4.7.2 G04 Isolated Acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [iss-engineering/generic-battle-c472-live-intercept]
+    paths:
+      - '.github/workflows/generic-autonomous-battle-c472-g04-run.yml'
+      - 'blender/iss_battle_runtime_pursuit_v1.py'
+      - 'blender/run_generic_battle_runtime_v1_candidate472_generic_battle.py'
+      - 'tools/validate_generic_autonomous_battle_c472.py'
+      - 'tools/validate_g04_c472_result.py'
+
+concurrency:
+  group: iss-generic-autonomous-battle-c472-g04-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
+  ASSET_ACCESS_EXPECTED_VERSION: '3.3.29-generic-autonomous-battle-c470-access'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  c472-g04:
+    name: Candidate 4.7.2 G04 live-intercept reacquisition acceptance
+    runs-on: ubuntu-22.04
+    timeout-minutes: 32
+    steps:
+      - name: Checkout C472 branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: G04 affected-layer preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_pursuit_v1.py \
+            blender/run_generic_battle_runtime_v1_candidate472_generic_battle.py \
+            tools/validate_generic_autonomous_battle_c471.py \
+            tools/validate_generic_autonomous_battle_c472.py \
+            tools/validate_g04_c472_result.py
+          python3 tools/validate_generic_autonomous_battle_c471.py | tee c472-c471-property.log
+          grep -q '"status": "PASS"' c472-c471-property.log
+          python3 tools/validate_generic_autonomous_battle_c472.py | tee c472-property.log
+          grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C472_PROPERTY_ACCEPTANCE"' c472-property.log
+          grep -q '"status": "PASS"' c472-property.log
+          grep -q '"dissimilarCapabilityResponse": "PASS"' c472-property.log
+          grep -q '"storyPrescribedSemanticTargetPreserved": true' c472-property.log
+          grep -q '"existingPairwiseSolverOraclePreserved": true' c472-property.log
+          grep -q '"contactThresholdChanged": false' c472-property.log
+          grep -q '"damageAdmissionThresholdChanged": false' c472-property.log
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate443.py)" = '358d34c437ee27d3115117f0aaa1139704277212'
+          test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
+          test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
+          test "$(git hash-object blender/iss_battle_runtime_consequences.py)" = 'ff239d56b823e31046db9ad300932f82262cbb39'
+          echo 'C472_G04_AFFECTED_LAYER_PREFLIGHT=PASS'
+
+      - name: Resolve exact Bugatti only for unchanged fixture builder dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          m=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not m: raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(m.group(1))
+          PY
+            )"
+          fi
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
+          assert d.get('version')==os.environ['ASSET_ACCESS_EXPECTED_VERSION'], d
+          a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'], a
+          assert isinstance(a.get('signedUrl'),str) and a['signedUrl'].startswith('https://'), a
+          PY
+          BUGATTI_SOURCE_URL="$(python3 - <<'PY'
+          import json
+          print(json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))['asset']['signedUrl'])
+          PY
+          )"
+          echo "::add-mask::$BUGATTI_SOURCE_URL"
+          echo "BUGATTI_SOURCE_URL=$BUGATTI_SOURCE_URL" >> "$GITHUB_ENV"
+          export BUGATTI_SOURCE_URL
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee c472-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' c472-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json'))
+          print('BUGATTI_PRIMARY='+d['assets']['bugattiA']['primaryScene'])
+          PY
+
+      - name: Build unchanged generic battle fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate446_g07.py --bugatti-primary "$BUGATTI_PRIMARY" | tee c472-fixtures.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_FIXTURES_PASS' c472-fixtures.log
+          SRC=artifacts/generic-battle-runtime-v1-candidate446-g07/generic-hypercar
+          DST=artifacts/g04-c472/generic-hypercar
+          mkdir -p "$DST"
+          cp "$SRC/request.json" "$DST/request.json"
+          cp "$SRC/asset-map.json" "$DST/asset-map.json"
+          test "$(sha256sum "$SRC/request.json" | awk '{print $1}')" = "$(sha256sum "$DST/request.json" | awk '{print $1}')"
+          test "$(sha256sum "$SRC/asset-map.json" | awk '{print $1}')" = "$(sha256sum "$DST/asset-map.json" | awk '{print $1}')"
+          python3 - <<'PY'
+          import json
+          p='artifacts/g04-c472/generic-hypercar/request.json'
+          d=json.load(open(p))
+          raw=json.dumps(d,sort_keys=True).lower()
+          for token in ('collisionframe','contactframe','impactframe','targetenergyj','impactenergyj','targetimpactspeedmps','trajectorypoints','pathpoints','waypoints','positionkeyframes','velocitykeyframes','steeringangle','brakingpoint','approachvector','collisionpoint','contactpoint','forcedwinner','winnerid'):
+              assert token not in raw, token
+          PY
+          echo 'C472_UNCHANGED_GENERIC_FIXTURE=PASS'
+
+      - name: Install exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee c472-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" c472-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run C472 generic battle for G04 boundary evidence
+        timeout-minutes: 14
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -u
+          D=artifacts/g04-c472/generic-hypercar
+          set +e
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate472_generic_battle.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee c472-generic-runtime.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "$RC" > c472-runtime-exit-code.txt
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_C472_ENGINEERING_READY' c472-generic-runtime.log
+          grep -q 'G04_LIVE_INTERCEPT_GOAL_APPLIED' c472-generic-runtime.log
+          test -s "$D/generic-autonomous-battle-v6-evidence.json"
+          echo "C472_RUNTIME_EXIT_CODE=$RC"
+
+      - name: Strict isolated G04 machine acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          D=artifacts/g04-c472/generic-hypercar
+          python3 tools/validate_g04_c472_result.py \
+            --battle "$D/generic-autonomous-battle-v6-evidence.json" \
+            --log c472-generic-runtime.log | tee c472-g04-machine.log
+          grep -q '"marker": "G04_C472_MACHINE_ACCEPTANCE"' c472-g04-machine.log
+          grep -q '"status": "PASS"' c472-g04-machine.log
+          grep -q '"counterattackReacquiredG05Boundary": true' c472-g04-machine.log
+          grep -q '"downstreamG05ContactRequiredForG04Pass": false' c472-g04-machine.log
+          echo 'ISS_G04_C472_MACHINE_ACCEPTANCE=PASS'
+
+      - name: Write C472 G04 manifest
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,os,subprocess
+          root=pathlib.Path('artifacts/g04-c472'); root.mkdir(parents=True,exist_ok=True)
+          def h(p): return subprocess.check_output(['git','hash-object',p],text=True).strip()
+          out={
+            'candidate':'ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_7_2_GENERIC_AUTONOMOUS_BATTLE',
+            'gate':'G04',
+            'mechanism':'G04_LIVE_PAIR_CENTER_INTERCEPT_GOAL_V1',
+            'failureFamily':'MOVING_TARGET_POINT_CHASE_FAILS_TO_REACQUIRE_CONTACT',
+            'affectedLayerAudit':'G04_MOVING_TARGET_REACQUISITION_FULL_AFFECTED_LAYER_AUDIT_20260918',
+            'g04AcceptanceBoundary':'REACQUIRE_AND_HANDOFF_TO_G05',
+            'downstreamG05AcceptanceRequiredForG04Pass':False,
+            'c471Preserved':True,
+            'c470Preserved':True,
+            'semanticToleranceChanged':False,
+            'localityToleranceChanged':False,
+            'contactThresholdChanged':False,
+            'damageAdmissionThresholdChanged':False,
+            'perAssetBattleCode':False,
+            'perVideoTrajectoryEngineering':False,
+            'headSha':os.environ.get('GITHUB_SHA'),
+            'pursuitHelperSha':h('blender/iss_battle_runtime_pursuit_v1.py'),
+            'runtimeWrapperSha':h('blender/run_generic_battle_runtime_v1_candidate472_generic_battle.py'),
+            'propertyValidatorSha':h('tools/validate_generic_autonomous_battle_c472.py'),
+            'resultValidatorSha':h('tools/validate_g04_c472_result.py'),
+            'scopePostflight':'PENDING_AFTER_MACHINE_RESULT_REVIEW',
+            'gateClosed':False,
+            'productionReadyClaimed':False,
+          }
+          (root/'c472-g04-acceptance-manifest.json').write_text(json.dumps(out,indent=2,sort_keys=True),encoding='utf-8')
+          PY
+
+      - name: Upload C472 G04 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: iss-g04-c472-${{ github.run_id }}
+          path: |
+            c472-*.log
+            c472-runtime-exit-code.txt
+            artifacts/g04-c472
+            artifacts/visual-vnext-rc2-preflight/asset-access.json
+          if-no-files-found: warn
+          retention-days: 30
