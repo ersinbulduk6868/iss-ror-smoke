@@ -31,6 +31,18 @@ class G05NegativeAcknowledgement:
         return (self.event_id, self.attacker_id, self.target_id)
 
 
+@dataclass(slots=True)
+class G05NegativeAckWindow:
+    first_frame: int | None = None
+    last_frame: int | None = None
+    consecutive_frames: int = 0
+
+    def clear(self) -> None:
+        self.first_frame = None
+        self.last_frame = None
+        self.consecutive_frames = 0
+
+
 def recoverable_post_handoff_nack(
     nack: G05NegativeAcknowledgement,
     *,
@@ -65,3 +77,36 @@ def recoverable_post_handoff_nack(
     if stage in {STAGE_SOLVER, STAGE_IMPACT_GATE}:
         return True
     return False
+
+
+def negative_ack_confirmed(
+    window: G05NegativeAckWindow,
+    nack: G05NegativeAcknowledgement,
+    *,
+    confirmation_frames: int,
+) -> bool:
+    """Confirm a nonproductive handoff without reacting to one-frame solver noise.
+
+    Existing-impact-gate rejection is already a final downstream decision and is
+    immediate. Outer/solver rejection must persist on consecutive physics frames for
+    the caller-supplied existing G05 observation horizon. The helper knows no asset,
+    threshold, semantic tolerance, collision frame target, or trajectory.
+    """
+    if str(nack.stage) == STAGE_IMPACT_GATE:
+        window.first_frame = int(nack.frame)
+        window.last_frame = int(nack.frame)
+        window.consecutive_frames = 1
+        return True
+
+    required = max(1, int(confirmation_frames))
+    frame = int(nack.frame)
+    if window.last_frame is None or frame < int(window.last_frame) or frame > int(window.last_frame) + 1:
+        window.first_frame = frame
+        window.last_frame = frame
+        window.consecutive_frames = 1
+    elif frame == int(window.last_frame):
+        pass
+    else:
+        window.last_frame = frame
+        window.consecutive_frames += 1
+    return int(window.consecutive_frames) >= required
