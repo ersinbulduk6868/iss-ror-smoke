@@ -161,7 +161,9 @@ def main() -> None:
         assert forbidden not in lowered, forbidden
 
     # C488 remains the inherited handoff implementation; C489 adds feedback only.
-    assert "G04_EVENT_SCOPED_ENGAGEMENT_AUTHORITY_V2" in c488_text
+    assert "from blender.iss_battle_runtime_engagement_authority_v2 import" in c488_text
+    assert "ENGAGEMENT_AUTHORITY_MODEL" in c488_text
+    assert "MECHANISM = ENGAGEMENT_AUTHORITY_MODEL" in c488_text
     assert "currentClosingSignRequiredAfterCertifiedProximity\": False" in c488_text
 
     print(json.dumps({
