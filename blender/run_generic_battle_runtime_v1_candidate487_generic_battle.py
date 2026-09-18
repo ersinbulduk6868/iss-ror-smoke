@@ -1,18 +1,17 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 from typing import Any
 
 from mathutils import Vector
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = __import__("pathlib").Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from blender import iss_battle_runtime_generic_battle_v6 as battle_v6
 from blender import iss_battle_runtime_generic_battle_v2 as control_v2
+from blender import iss_battle_runtime_generic_battle_v6 as battle_v6
 from blender import iss_battle_runtime_physics as physics
 from blender import run_generic_battle_runtime_v1_candidate465_generic_battle as candidate465
 from blender import run_generic_battle_runtime_v1_candidate474_generic_battle as candidate474
@@ -29,7 +28,7 @@ from blender.iss_battle_runtime_engagement_lifecycle_v1 import (
     HOLD_STANDOFF,
     PHASE_ALIGN_STANDOFF,
     PHASE_APPROACH,
-    PHASE_PREPARE,
+    PHASE_HANDOFF_READY,
     PHASE_RECOVERING,
     PHASE_RUNWAY_REOPEN,
     REOPEN_DISTANCE,
@@ -63,6 +62,24 @@ _lifecycle_rows: list[dict[str, Any]] = []
 _actual_readiness_deferred: set[tuple[str, str, str]] = set()
 
 
+def _current_frame(event: Any | None = None) -> int:
+    context = candidate474._pending_tactical_context or {}
+    if context.get("frame") is not None:
+        return int(context["frame"])
+    return int(getattr(event, "start_frame", 0) or 0)
+
+
+def _sync_pending_tactical_context(tactical: Any) -> None:
+    context = candidate474._pending_tactical_context
+    if context is None:
+        return
+    context["currentTacticalMode"] = str(tactical.mode)
+    context["tacticalTransition"] = bool(tactical.transition)
+    context["speedIntent"] = str(tactical.speed_intent)
+    context["tacticalReason"] = str(tactical.reason)
+    context["cycle"] = int(tactical.cycle)
+
+
 def _copy_tactical_goal(dst: Any, src: Any) -> None:
     for name in (
         "mode",
@@ -78,14 +95,15 @@ def _copy_tactical_goal(dst: Any, src: Any) -> None:
         "stand_off_surface_gap_m",
     ):
         setattr(dst, name, getattr(src, name))
+    _sync_pending_tactical_context(dst)
 
 
 def _pair_from_key(key: tuple[str, str, str]) -> tuple[str, str]:
-    return (key[1], key[2])
+    return key[1], key[2]
 
 
 def _clear_legacy_pair_state(pair_key: tuple[str, str]) -> None:
-    """Prevent pair-only historical caches from leaking across event transactions."""
+    """Remove historical pair-only caches when a transaction ends or recovers."""
     candidate474._previous_effective_gap.pop(pair_key, None)
     candidate474._defer_active.discard(pair_key)
     candidate474._progress_refresh_counts.pop(pair_key, None)
@@ -142,6 +160,21 @@ def _set_phase(
     )
 
 
+def _end_transaction(entity: str, key: tuple[str, str, str], frame: int) -> None:
+    _clear_legacy_pair_state(_pair_from_key(key))
+    _actual_readiness_deferred.discard(key)
+    battle_v6._last_tactical_mode.pop(entity, None)
+    battle_v6._tactical_memories.pop(entity, None)
+    marker(
+        "G04_EVENT_TRANSACTION_ENDED",
+        frame=int(frame),
+        eventId=key[0],
+        attackerId=key[1],
+        targetId=key[2] or None,
+        model=MECHANISM,
+    )
+
+
 def _scoped_active_goal(
     entity: str,
     frame: int,
@@ -158,13 +191,22 @@ def _scoped_active_goal(
     event = _BASE_ACTIVE_GOAL(entity, frame, program, states)
     if event is None:
         if previous_key is not None:
+            _end_transaction(entity, previous_key, int(frame))
             _active_transaction_by_actor.pop(entity, None)
-            battle_v6._last_tactical_mode.pop(entity, None)
         return None
 
     key = transaction_key(event.event_id, entity, event.target_id)
     if previous_key is not None and previous_key != key:
-        _clear_legacy_pair_state(_pair_from_key(previous_key))
+        _end_transaction(entity, previous_key, int(frame))
+        marker(
+            "G04_EVENT_TRANSACTION_CHANGED",
+            frame=int(frame),
+            previousEventId=previous_key[0],
+            eventId=key[0],
+            attackerId=key[1],
+            targetId=key[2] or None,
+            model=MECHANISM,
+        )
 
     tactical_memory = _event_tactical_memories.setdefault(key, TacticalMemory())
     battle_v6._tactical_memories[entity] = tactical_memory
@@ -197,6 +239,13 @@ def event_scoped_generic_battle_set_controls(
         mode = battle_v6._last_tactical_mode.get(entity)
         if mode is not None:
             _event_last_tactical_mode[key] = str(mode)
+        if (key[0], entity) in battle_v6._handoff_latches:
+            _set_phase(
+                key,
+                frame=int(frame),
+                phase=PHASE_HANDOFF_READY,
+                reason="SOLVER_HANDOFF_LATCH_ACTIVE",
+            )
 
     changes = candidate465.stabilize_active_handoff_cutoff_frames(
         candidate465.hardened._cutoff_frames,
@@ -232,8 +281,8 @@ def actual_goal_lifecycle_goal_for_tactical(
     actor_id = str(actor.profile.entity_id)
     target_id = str(target.profile.entity_id)
     key = transaction_key(event.event_id, actor_id, target_id)
-    lifecycle = _lifecycle_memories.setdefault(key, EngagementLifecycleMemory())
     tactical_memory = _event_tactical_memories.setdefault(key, TacticalMemory())
+    frame = _current_frame(event)
 
     goal_point = _BASE_GOAL_FOR_TACTICAL(actor, target, event, tactical, actors)
     position = actor.chassis.matrix_world.translation.copy()
@@ -248,7 +297,9 @@ def actual_goal_lifecycle_goal_for_tactical(
     target_vector.z = 0.0
     raw_heading = physics.signed_heading_error(forward, target_vector)
     actual_heading = motion_heading_error(raw_heading, tactical.speed_intent)
-    contention = float(control_v2._contention_score(actor_id, actor, actors, event.target_id))
+    contention = float(
+        control_v2._contention_score(actor_id, actor, actors, event.target_id)
+    )
 
     autonomy_memory = battle_v6._autonomy_memories.get((event.event_id, actor_id))
     recovery_active = bool(
@@ -256,7 +307,10 @@ def actual_goal_lifecycle_goal_for_tactical(
     )
 
     pair = candidate474._active_pair_context or {}
+    if str(pair.get("attackerId") or "") != actor_id or str(pair.get("targetId") or "") != target_id:
+        raise RuntimeError("G04_EVENT_SCOPED_PAIR_CONTEXT_MISMATCH")
     surface_gap = float(pair.get("radialGapM", 0.0))
+
     actual_ready = live_contact_commit_ready(
         requires_contact=bool(event.requires_contact),
         engagement_runway_armed=bool(tactical_memory.engagement_runway_armed),
@@ -280,7 +334,7 @@ def actual_goal_lifecycle_goal_for_tactical(
         tactical.contact_commit = False
         _set_phase(
             key,
-            frame=int(event.start_frame if autonomy_memory is None else getattr(autonomy_memory, "last_progress_frame", 0) or 0),
+            frame=frame,
             phase=PHASE_RECOVERING,
             reason="LOW_LEVEL_RECOVERY_OWNS_MOTOR_AUTHORITY",
         )
@@ -288,10 +342,9 @@ def actual_goal_lifecycle_goal_for_tactical(
 
     if action == REOPEN_DISTANCE:
         tactical_memory.engagement_runway_armed = False
-        base_scale = max(0.20, min(1.0, float(tactical.speed_scale)))
         replacement = GenericBattleTacticalPlanner._open_distance(
             tactical_memory,
-            base_scale,
+            max(0.20, min(1.0, float(tactical.speed_scale))),
             bool(tactical.transition),
             "ACTUAL_GOAL_READINESS_RUNWAY_REOPEN",
         )
@@ -299,7 +352,7 @@ def actual_goal_lifecycle_goal_for_tactical(
         _actual_readiness_deferred.add(key)
         _set_phase(
             key,
-            frame=int(getattr(candidate474._pending_tactical_context or {}, "frame", 0) if False else (candidate474._pending_tactical_context or {}).get("frame", 0)),
+            frame=frame,
             phase=PHASE_RUNWAY_REOPEN,
             reason="ACTUAL_NAVIGATION_GOAL_NOT_READY_INSIDE_RUNWAY",
             actualHeadingErrorRad=float(actual_heading),
@@ -327,10 +380,11 @@ def actual_goal_lifecycle_goal_for_tactical(
         tactical.stand_off_surface_gap_m = max(
             0.0, float(tactical_memory.engagement_runway_required_m)
         )
+        _sync_pending_tactical_context(tactical)
         _actual_readiness_deferred.add(key)
         _set_phase(
             key,
-            frame=int((candidate474._pending_tactical_context or {}).get("frame", 0)),
+            frame=frame,
             phase=PHASE_ALIGN_STANDOFF,
             reason="ACTUAL_NAVIGATION_GOAL_ALIGNMENT_AT_SAFE_RUNWAY",
             actualHeadingErrorRad=float(actual_heading),
@@ -346,18 +400,21 @@ def actual_goal_lifecycle_goal_for_tactical(
             _actual_readiness_deferred.discard(key)
             marker(
                 "G04_ACTUAL_GOAL_CONTACT_READINESS_RECOVERED",
+                frame=frame,
                 eventId=key[0],
                 attackerId=key[1],
                 targetId=key[2] or None,
                 actualHeadingErrorRad=round(float(actual_heading), 6),
                 contention=round(float(contention), 6),
                 surfaceGapM=round(float(surface_gap), 6),
-                runwayRequiredM=round(float(tactical_memory.engagement_runway_required_m), 6),
+                runwayRequiredM=round(
+                    float(tactical_memory.engagement_runway_required_m), 6
+                ),
                 model=MECHANISM,
             )
         _set_phase(
             key,
-            frame=int((candidate474._pending_tactical_context or {}).get("frame", 0)),
+            frame=frame,
             phase=PHASE_APPROACH,
             reason="ACTUAL_NAVIGATION_GOAL_READY_FOR_CONTACT_APPROACH",
         )
@@ -375,7 +432,9 @@ def event_scoped_recovery_autonomy_update(
     target_id = str(pair.get("targetId") or "")
     key = _active_transaction_by_actor.get(attacker_id)
     if key is None:
-        key = transaction_key("", attacker_id, target_id)
+        raise RuntimeError("G04_EVENT_SCOPED_TRANSACTION_CONTEXT_MISSING")
+    if key[2] != target_id:
+        raise RuntimeError("G04_EVENT_SCOPED_TRANSACTION_TARGET_MISMATCH")
     lifecycle = _lifecycle_memories.setdefault(key, EngagementLifecycleMemory())
 
     pair_key = (attacker_id, target_id)
@@ -411,9 +470,9 @@ def event_scoped_recovery_autonomy_update(
         marker(
             "G04_EVENT_SCOPED_STALL_RECOVERY_TRIGGERED",
             frame=int(obs.frame),
-            eventId=key[0] or None,
-            attackerId=attacker_id or None,
-            targetId=target_id or None,
+            eventId=key[0],
+            attackerId=key[1],
+            targetId=key[2] or None,
             effectiveCollisionProxyGapM=float(effective_gap),
             existingHandoffGapM=float(handoff_gap),
             previousLastProgressFrame=previous_progress_frame,
@@ -438,14 +497,13 @@ def event_scoped_recovery_autonomy_update(
         tactical_memory = _event_tactical_memories.get(key)
         if tactical_memory is not None:
             tactical_memory.engagement_runway_armed = False
-        if not lifecycle.recovery_replan_reported:
-            command.replan_triggered = True
-            lifecycle.recovery_replan_reported = True
+        command.replan_triggered = True
+        lifecycle.recovery_replan_reported = True
         marker(
             "G04_EVENT_SCOPED_RECOVERY_REPLAN_PROPAGATED",
             frame=int(obs.frame),
-            eventId=key[0] or None,
-            attackerId=key[1] or None,
+            eventId=key[0],
+            attackerId=key[1],
             targetId=key[2] or None,
             controllerMode=current_mode,
             controllerReason=str(command.reason),
@@ -461,8 +519,8 @@ def event_scoped_recovery_autonomy_update(
             marker(
                 "G04_EVENT_SCOPED_RECOVERY_REPLAN_PROPAGATED",
                 frame=int(obs.frame),
-                eventId=key[0] or None,
-                attackerId=key[1] or None,
+                eventId=key[0],
+                attackerId=key[1],
                 targetId=key[2] or None,
                 controllerMode=current_mode,
                 controllerReason=str(command.reason),
@@ -475,11 +533,12 @@ def event_scoped_recovery_autonomy_update(
         if tactical_memory is not None:
             tactical_memory.engagement_runway_armed = False
         _clear_legacy_pair_state(pair_key)
+        _actual_readiness_deferred.add(key)
         marker(
             "G04_EVENT_SCOPED_RECOVERY_COMPLETED_RUNWAY_INVALIDATED",
             frame=int(obs.frame),
-            eventId=key[0] or None,
-            attackerId=key[1] or None,
+            eventId=key[0],
+            attackerId=key[1],
             targetId=key[2] or None,
             recoveryEpoch=int(lifecycle.recovery_epoch),
             model=MECHANISM,
@@ -495,72 +554,82 @@ def main() -> None:
     _lifecycle_rows.clear()
     _actual_readiness_deferred.clear()
 
-    # Supersede only the incomplete C486 G04 corridor/recovery composition.
-    # Historical source files remain immutable; G05/G06/G07/G08 authority code is
-    # untouched. C486's mode-blind corridor wrapper is bypassed, while its C485
-    # contact-commit predecessor and all established downstream gates remain in the
-    # execution chain.
+    # Supersede only C486's incomplete, mode-blind G04 corridor composition.
+    # Historical source remains immutable. G05/G06/G07/G08 code and thresholds
+    # remain untouched; existing C485 realized-motion and C484 alignment gates stay
+    # in the controller chain.
     candidate486.corridor_aware_tactical_decide = candidate486._C485_TACTICAL_DECIDE
     battle_v6._goal_for_tactical = actual_goal_lifecycle_goal_for_tactical
-    candidate481.defer_progress_aware_base_autonomy_update = event_scoped_recovery_autonomy_update
+    candidate481.defer_progress_aware_base_autonomy_update = (
+        event_scoped_recovery_autonomy_update
+    )
     candidate465.generic_battle_set_controls = event_scoped_generic_battle_set_controls
 
-    print(json.dumps({
-        "marker": "GENERIC_AUTONOMOUS_BATTLE_C487_ENGINEERING_READY",
-        "candidate": CANDIDATE,
-        "mechanism": MECHANISM,
-        "affectedLayerAudit": AUDIT,
-        "affectedLayerAuditStatus": "PASS",
-        "failureFamily": FAILURE_FAMILY,
-        "rootCausesClosedByDesign": [
-            "TACTICAL_AND_AUTONOMY_RECOVERY_OWNERSHIP_FRAGMENTED",
-            "C481_STALL_RECOVERY_DID_NOT_PROPAGATE_REPLAN_TO_EVENT_STATE",
-            "RECOVER_STATE_COULD_PERSIST_WHILE_TACTICAL_MODE_REMAINED_ENGAGE",
-            "C486_CORRIDOR_OVERRULED_NON_CONTACT_TACTICAL_MODES",
-            "CONTACT_READINESS_USED_TARGET_CENTER_HEADING_NOT_ACTUAL_NAVIGATION_GOAL",
-            "PAIR_ONLY_G04_CACHES_COULD_LEAK_ACROSS_SEQUENTIAL_EVENTS",
-        ],
-        "eventActorTargetTransactionScope": True,
-        "eventScopedTacticalMemory": True,
-        "actualNavigationGoalReadiness": True,
-        "modeAwareContactCorridor": True,
-        "recoveryOwnsMotorAuthorityUntilCompletion": True,
-        "recoveryReplanPropagatedExactlyOncePerEpoch": True,
-        "runwayInvalidatedAfterRecovery": True,
-        "legacyPairStateClearedOnEventTransition": True,
-        "flankBrakeEvadeOwnershipPreserved": True,
-        "c485RealizedMotionHandoffPreserved": True,
-        "c484AlignmentSemanticsPreserved": True,
-        "c483DriveDirectionPreserved": True,
-        "c482CollisionRolesPreserved": True,
-        "c480SemanticTransactionPreserved": True,
-        "g05NativeSolverFinalAuthorityPreserved": True,
-        "g05SourceChanged": False,
-        "g06SourceChanged": False,
-        "g07SourceChanged": False,
-        "g08SourceChanged": False,
-        "g05ThresholdImported": False,
-        "contactThresholdChanged": False,
-        "semanticToleranceChanged": False,
-        "localityToleranceChanged": False,
-        "damageAdmissionThresholdChanged": False,
-        "damageThresholdAwareControl": False,
-        "targetToughnessAwareControl": False,
-        "desiredImpactSpeedControl": False,
-        "desiredImpactEnergyControl": False,
-        "assetIdentityBranch": False,
-        "perAssetBattleCode": False,
-        "perAssetTacticalTuning": False,
-        "perVideoTrajectoryEngineering": False,
-        "fixedWorldCoordinates": False,
-        "exactCollisionFrameTarget": False,
-        "exactImpactEnergyTarget": False,
-        "actorPoseOrVelocityMutation": False,
-        "fixtureBattlePlanChanged": False,
-        "frozenNineServiceArchitectureChanged": False,
-        "gateClosed": False,
-        "productionReadyClaimed": False,
-    }, sort_keys=True), flush=True)
+    print(
+        json.dumps(
+            {
+                "marker": "GENERIC_AUTONOMOUS_BATTLE_C487_ENGINEERING_READY",
+                "candidate": CANDIDATE,
+                "mechanism": MECHANISM,
+                "affectedLayerAudit": AUDIT,
+                "affectedLayerAuditStatus": "PASS",
+                "failureFamily": FAILURE_FAMILY,
+                "rootCausesClosedByDesign": [
+                    "TACTICAL_AND_AUTONOMY_RECOVERY_OWNERSHIP_FRAGMENTED",
+                    "C481_STALL_RECOVERY_DID_NOT_PROPAGATE_REPLAN_TO_EVENT_STATE",
+                    "RECOVER_STATE_COULD_PERSIST_WHILE_TACTICAL_MODE_REMAINED_ENGAGE",
+                    "C486_CORRIDOR_OVERRULED_NON_CONTACT_TACTICAL_MODES",
+                    "CONTACT_READINESS_USED_TARGET_CENTER_HEADING_NOT_ACTUAL_NAVIGATION_GOAL",
+                    "PAIR_ONLY_G04_CACHES_COULD_LEAK_ACROSS_SEQUENTIAL_EVENTS",
+                    "TACTICAL_MUTATION_COULD_LEAVE_C474_PROGRESS_CONTEXT_STALE",
+                ],
+                "eventActorTargetTransactionScope": True,
+                "eventScopedTacticalMemory": True,
+                "actualNavigationGoalReadiness": True,
+                "tacticalMutationProgressContextSynchronized": True,
+                "modeAwareContactCorridor": True,
+                "recoveryOwnsMotorAuthorityUntilCompletion": True,
+                "recoveryReplanPropagatedExactlyOncePerEpoch": True,
+                "runwayInvalidatedAfterRecovery": True,
+                "legacyPairStateClearedOnEventTransition": True,
+                "flankBrakeEvadeOwnershipPreserved": True,
+                "c486ModeBlindCorridorSuperseded": True,
+                "c485RealizedMotionHandoffPreserved": True,
+                "c484AlignmentSemanticsPreserved": True,
+                "c483DriveDirectionPreserved": True,
+                "c482CollisionRolesPreserved": True,
+                "c480SemanticTransactionPreserved": True,
+                "g05NativeSolverFinalAuthorityPreserved": True,
+                "g05SourceChanged": False,
+                "g06SourceChanged": False,
+                "g07SourceChanged": False,
+                "g08SourceChanged": False,
+                "g05ThresholdImported": False,
+                "contactThresholdChanged": False,
+                "semanticToleranceChanged": False,
+                "localityToleranceChanged": False,
+                "damageAdmissionThresholdChanged": False,
+                "damageThresholdAwareControl": False,
+                "targetToughnessAwareControl": False,
+                "desiredImpactSpeedControl": False,
+                "desiredImpactEnergyControl": False,
+                "assetIdentityBranch": False,
+                "perAssetBattleCode": False,
+                "perAssetTacticalTuning": False,
+                "perVideoTrajectoryEngineering": False,
+                "fixedWorldCoordinates": False,
+                "exactCollisionFrameTarget": False,
+                "exactImpactEnergyTarget": False,
+                "actorPoseOrVelocityMutation": False,
+                "fixtureBattlePlanChanged": False,
+                "frozenNineServiceArchitectureChanged": False,
+                "gateClosed": False,
+                "productionReadyClaimed": False,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
 
     candidate486.main()
 
