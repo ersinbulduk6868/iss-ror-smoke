@@ -2,6 +2,10 @@ name: ISS Generic Autonomous Battle Candidate 4.6.9 Cross-Gate Acceptance
 
 on:
   workflow_dispatch:
+  push:
+    branches: [iss-engineering/generic-battle-c469-repair]
+    paths:
+      - '.github/workflows/generic-autonomous-battle-c469-run.yml'
 
 concurrency:
   group: iss-generic-autonomous-battle-c469-run
