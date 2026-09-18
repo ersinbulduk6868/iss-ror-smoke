@@ -26,7 +26,10 @@ AUDIT = "G04_C490_CERTIFICATE_TO_HANDOFF_OWNERSHIP_FULL_AFFECTED_LAYER_AUDIT_202
 FAILURE_FAMILY = "DUPLICATE_ACTUAL_GOAL_READINESS_REOPENS_FULL_RUNWAY_AFTER_REALIZED_APPROACH_CERTIFICATION"
 
 _ORIGINAL_C487_ACTUAL_GOAL = candidate487.actual_goal_lifecycle_goal_for_tactical
+_ORIGINAL_C488_UPDATE_CERTIFICATE = candidate488.update_approach_certificate
+_ORIGINAL_C488_AUTHORITY_ACTION = candidate488.authority_action
 _continuity_active: dict[tuple[str, str, str], int] = {}
+_continuity_certificate_ids: set[int] = set()
 
 
 def _key(actor: Any, target: Any, event: Any) -> tuple[str, str, str]:
@@ -35,6 +38,13 @@ def _key(actor: Any, target: Any, event: Any) -> tuple[str, str, str]:
         str(actor.profile.entity_id),
         str(target.profile.entity_id),
     )
+
+
+def _release_continuity(key: tuple[str, str, str], certificate: Any | None) -> int | None:
+    qualified_frame = _continuity_active.pop(key, None)
+    if certificate is not None:
+        _continuity_certificate_ids.discard(id(certificate))
+    return qualified_frame
 
 
 def c491_certified_navigation_goal_for_tactical(
@@ -66,6 +76,7 @@ def c491_certified_navigation_goal_for_tactical(
         qualified_frame = int(certificate.qualified_frame or frame)
         previous = _continuity_active.get(key)
         _continuity_active[key] = qualified_frame
+        _continuity_certificate_ids.add(id(certificate))
         if previous != qualified_frame:
             marker(
                 "G04_CERTIFIED_APPROACH_NAVIGATION_CONTINUITY_ENGAGED",
@@ -83,8 +94,7 @@ def c491_certified_navigation_goal_for_tactical(
         # The high-level planner is still contact-directed and committed. Do not
         # let C487's duplicate actual-goal readiness layer replace that tactical
         # goal with OPEN_DISTANCE after the same transaction has already earned
-        # the C488 realized-approach certificate. C488 still owns certificate
-        # miss/recovery invalidation and C484 still owns final alignment safety.
+        # the C488 realized-approach certificate.
         return candidate487._BASE_GOAL_FOR_TACTICAL(
             actor,
             target,
@@ -95,14 +105,14 @@ def c491_certified_navigation_goal_for_tactical(
 
     if key in _continuity_active:
         frame = int(candidate487._current_frame(event))
-        qualified_frame = _continuity_active.pop(key)
+        qualified_frame = _release_continuity(key, certificate)
         marker(
             "G04_CERTIFIED_APPROACH_NAVIGATION_CONTINUITY_RELEASED",
             frame=frame,
             eventId=key[0],
             attackerId=key[1],
             targetId=key[2],
-            qualifiedFrame=int(qualified_frame),
+            qualifiedFrame=int(qualified_frame or frame),
             certificateQualified=bool(certificate is not None and certificate.qualified),
             incomingTacticalMode=str(tactical.mode),
             incomingContactCommit=bool(tactical.contact_commit),
@@ -113,17 +123,51 @@ def c491_certified_navigation_goal_for_tactical(
     return _ORIGINAL_C487_ACTUAL_GOAL(actor, target, event, tactical, actors)
 
 
+def c491_update_approach_certificate(memory: Any, **kwargs: Any):
+    continuity_owns = bool(
+        id(memory) in _continuity_certificate_ids
+        and memory.qualified
+        and bool(kwargs.get("contact_directed_mode"))
+        and not bool(kwargs.get("recovery_active"))
+    )
+    if continuity_owns and not bool(kwargs.get("live_readiness")):
+        kwargs = dict(kwargs)
+        kwargs["live_readiness"] = True
+    result = _ORIGINAL_C488_UPDATE_CERTIFICATE(memory, **kwargs)
+    if not memory.qualified:
+        _continuity_certificate_ids.discard(id(memory))
+    return result
+
+
+def c491_authority_action(memory: Any, **kwargs: Any) -> str:
+    continuity_owns = bool(
+        id(memory) in _continuity_certificate_ids
+        and memory.qualified
+        and bool(kwargs.get("contact_directed_mode"))
+        and not bool(kwargs.get("recovery_active"))
+    )
+    if continuity_owns and not bool(kwargs.get("live_readiness")):
+        kwargs = dict(kwargs)
+        kwargs["live_readiness"] = True
+    return _ORIGINAL_C488_AUTHORITY_ACTION(memory, **kwargs)
+
+
 def main() -> None:
     _continuity_active.clear()
+    _continuity_certificate_ids.clear()
 
-    # C491 changes only the ownership boundary between the already-qualified C488
-    # approach certificate and C487's duplicate actual-goal pre-contact readiness.
-    # It does not mutate the tactical decision, its contact-commit flag, any G05
-    # authority/oracle, or any acceptance threshold. Recovery always delegates to
-    # C487 unchanged.
+    # C491 changes only the ownership boundary after a realized-approach
+    # certificate has already been earned. Before qualification, every existing
+    # C487/C488 readiness condition is unchanged. After qualification, continuity
+    # exists only while the upstream planner remains contact-directed+committed,
+    # the same transaction remains active, and recovery is inactive. The C488
+    # certificate's own separation/miss invalidation and C484 alignment gate remain
+    # downstream safeguards. G05 authority is untouched.
     candidate487.actual_goal_lifecycle_goal_for_tactical = (
         c491_certified_navigation_goal_for_tactical
     )
+    candidate488.update_approach_certificate = c491_update_approach_certificate
+    candidate488.authority_action = c491_authority_action
 
     print(json.dumps({
         "marker": "GENERIC_AUTONOMOUS_BATTLE_C491_ENGINEERING_READY",
@@ -140,10 +184,12 @@ def main() -> None:
         "rootCauseEffectiveCollisionProxyGapM": 0.1751458235048955,
         "rootCauseHandoffGapM": 0.17631134841839474,
         "certificateNavigationOwnershipAfterQualification": True,
+        "certificateLiveReadinessContinuityAfterQualification": True,
         "incomingPlannerContactCommitStillRequired": True,
         "incomingContactDirectedModeStillRequired": True,
         "sameTransactionStillRequired": True,
         "recoveryPreemptsCertificateContinuity": True,
+        "preQualificationReadinessUnchanged": True,
         "c488CertificateMissInvalidationPreserved": True,
         "c488CertificateRecoveryInvalidationPreserved": True,
         "c484TranslationDominantAlignmentPreserved": True,
