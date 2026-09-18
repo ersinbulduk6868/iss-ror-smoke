@@ -256,7 +256,7 @@ def main() -> None:
         "frozenNineServiceArchitectureChanged": False,
         "gateClosed": False,
         "productionReadyClaimed": False,
-    }, sort_keys=True), flush=True))
+    }, sort_keys=True), flush=True)
 
     candidate488.main()
 
