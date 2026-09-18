@@ -1,0 +1,48 @@
+name: ISS Generic Autonomous Battle Candidate 4.6.9 Property Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  property:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - name: Checkout C469 repair branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Syntax, failure-family properties, and locked-contract preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_handoff_v1.py \
+            blender/iss_battle_runtime_handoff_v2.py \
+            blender/iss_battle_runtime_handoff_v3.py \
+            blender/run_generic_battle_runtime_v1_candidate465_generic_battle.py \
+            blender/run_generic_battle_runtime_v1_candidate468_generic_battle.py \
+            blender/run_generic_battle_runtime_v1_candidate469_generic_battle.py \
+            tools/validate_generic_autonomous_battle_c469.py
+
+          python3 tools/validate_generic_autonomous_battle_c469.py | tee c469-property.log
+          grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C469_PROPERTY_ACCEPTANCE"' c469-property.log
+          grep -q '"status": "PASS"' c469-property.log
+          grep -q '"releasedTransactionCutoffInvalidated": true' c469-property.log
+          grep -q '"sameFrameFreshRelatchCutoffPreserved": true' c469-property.log
+          grep -q '"activeTransactionCutoffPreserved": true' c469-property.log
+          grep -q '"existingG05DetectorReusedUnchanged": true' c469-property.log
+          grep -q '"contactThresholdChanged": false' c469-property.log
+          grep -q '"damageAdmissionThresholdChanged": false' c469-property.log
+          grep -q '"perAssetBattleCode": false' c469-property.log
+
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate465_generic_battle.py)" = '1512a977d36f9e74ce061230fa2d31d5c0e47ec8'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate468_generic_battle.py)" = 'dccbfc97edad8df9c03f44e1f087b4a97a0cf26b'
+          test "$(git hash-object blender/iss_battle_runtime_contract.py)" = '17860a4945d41316793e2a807585d8486a8e65ef'
+          test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
+          test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
+
+          echo 'C469_PROPERTY_ACCEPTANCE=PASS'
