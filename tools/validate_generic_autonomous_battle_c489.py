@@ -46,6 +46,21 @@ def _live_event_target_zone_assignments(tree: ast.AST) -> list[int]:
     return rows
 
 
+def _operational_source(helper_text: str, wrapper_text: str) -> str:
+    """Remove only explicit false-valued governance receipt keys before token audit."""
+    text = helper_text + "\n" + wrapper_text
+    allowed_receipt_lines = (
+        '"desiredImpactSpeedControl": False,',
+        '"desiredImpactEnergyControl": False,',
+        '"exactCollisionFrameTarget": False,',
+        '"exactImpactEnergyTarget": False,',
+    )
+    for line in allowed_receipt_lines:
+        assert line in wrapper_text, ("C489_EXPECTED_GOVERNANCE_RECEIPT_FIELD_MISSING", line)
+        text = text.replace(line, "")
+    return text
+
+
 def main() -> None:
     helper_text = HELPER.read_text(encoding="utf-8")
     wrapper_text = WRAPPER.read_text(encoding="utf-8")
@@ -64,8 +79,6 @@ def main() -> None:
     for name in ("c467", "c470", "c480", "c488"):
         ast.parse(texts[name], filename=name)
 
-    # Ownership decision: only runtime-selected semantics in an active solver
-    # handoff may use observation-plane contact classification.
     assert should_classify_observed_contact_semantics(
         runtime_selected_semantics=True,
         story_target_zone_prescribed=False,
@@ -111,9 +124,6 @@ def main() -> None:
     assert strict.engagement_intent_zone == "front"
     assert strict.observed_contact_zone is None
 
-    # C489 must not mutate the live event semantic intent. A shallow observed-event
-    # view is allowed, and PendingContact must carry the verified observed zone so
-    # G06 damage semantics match the realized contact location.
     assert _live_event_target_zone_assignments(wrapper_tree) == [], _live_event_target_zone_assignments(wrapper_tree)
     assert "observed_event.target_zone = selection.observed_contact_zone" in wrapper_text
     assert "item.target_zone = observed_zone" in wrapper_text
@@ -123,7 +133,6 @@ def main() -> None:
     assert "_BASE_PAIRWISE_RECEIPT" in wrapper_text
     assert "candidate488.main()" in wrapper_text
 
-    # Established G05 gates/oracles remain present and are reused by delegation.
     assert "ContactOuterAuthorityGate.evaluate" in g05_text
     assert "PairwiseSolverResponseOracle.evaluate" in g05_text
     assert "_semantic_tolerance(target, event.target_zone)" in g05_text
@@ -158,21 +167,15 @@ def main() -> None:
     for token in required:
         assert token in wrapper_text, token
 
-    lower = (helper_text + "\n" + wrapper_text).lower()
+    operational_lower = _operational_source(helper_text, wrapper_text).lower()
     for forbidden in (
         "bugatti", "bulldozer", "ferrari",
         "desiredimpactspeed", "desiredimpactenergy",
         "collisionframe", "impactframe", "trajectorypoints", "waypoints",
         "set_pose", "linear_velocity =",
     ):
-        # Governance receipt fields exactCollisionFrameTarget/exactImpactEnergyTarget
-        # are intentionally permitted; only operational/choreography identifiers
-        # are forbidden. Avoid raw false positives for those receipt keys.
-        if forbidden in {"collisionframe", "impactframe"}:
-            continue
-        assert forbidden not in lower, forbidden
+        assert forbidden not in operational_lower, forbidden
 
-    # No semantic/locality/contact threshold constants may be introduced in C489.
     assert "semantic_tolerance" not in helper_text.lower()
     assert "semantic_tolerance =" not in wrapper_text.lower()
     assert "locality_tolerance =" not in wrapper_text.lower()
@@ -192,6 +195,8 @@ def main() -> None:
         "pendingDamageZoneObservedSemanticBinding": "PASS",
         "existingG05OuterAuthorityGatePreserved": "PASS",
         "existingPairwiseSolverOraclePreserved": "PASS",
+        "operationalChoreographyIdentifierAudit": "PASS",
+        "governanceReceiptFieldsAllowed": True,
         "semanticToleranceChanged": False,
         "localityToleranceChanged": False,
         "contactThresholdChanged": False,
