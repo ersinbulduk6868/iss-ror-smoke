@@ -23,7 +23,7 @@ env:
   BLENDER_VERSION: '4.5.13'
   EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
   ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
-  ASSET_ACCESS_EXPECTED_VERSION: '3.3.29-generic-autonomous-battle-c470-access'
+  ASSET_ACCESS_EXPECTED_VERSION: '3.3.30-generic-autonomous-battle-c472-access'
   ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
   SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
 
