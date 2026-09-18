@@ -70,13 +70,11 @@ jobs:
           grep -q '"localityToleranceChanged": false' c465-property.log
           grep -q '"fixtureMutationForAcceptance": false' c465-property.log
 
-          # C465 delta pins.
           test "$(git hash-object blender/iss_battle_runtime_handoff_v2.py)" = 'a11b0e0937eb97e200d02717fe10b7cf35097d8c'
           test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate465_generic_battle.py)" = '1512a977d36f9e74ce061230fa2d31d5c0e47ec8'
           test "$(git hash-object tools/validate_generic_autonomous_battle_c465.py)" = '546e774b3bfce1c94df2ed99c110ce08bff5baa1'
           test "$(git hash-object tools/validate_generic_autonomous_battle_c465_result.py)" = '43570dec4403f8cf07cb2c10675163409baed87b'
 
-          # Baseline/open-layer pins: C465 does not redesign or weaken them.
           test "$(git hash-object blender/iss_battle_runtime_handoff_v1.py)" = 'ce7dbc0cc273691e1d891dcb5255d187976a0aa2'
           test "$(git hash-object blender/iss_battle_runtime_tactics_v5.py)" = 'fd6bb762b65301da9a8f138f05e22e0a76599fd3'
           test "$(git hash-object blender/iss_battle_runtime_generic_battle_v6.py)" = '58c4aba611bef27273ce00f61405e23538b1a861'
@@ -86,7 +84,6 @@ jobs:
           test "$(git hash-object tools/validate_generic_autonomous_battle_c464.py)" = '05f59c038d3c1f205bd43982615046ffb5dacb83'
           test "$(git hash-object tools/validate_generic_autonomous_battle_c464_result.py)" = '295d5a45206f062bc8f63dd580a31a912e461ee0'
 
-          # Locked historical contracts remain byte-identical.
           test "$(git hash-object blender/iss_battle_runtime_contract.py)" = '17860a4945d41316793e2a807585d8486a8e65ef'
           test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
           test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
@@ -124,7 +121,7 @@ jobs:
           d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
           assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
           assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
-          assert d.get('version')=='3.3.23-generic-autonomous-battle-c464-access', d
+          assert d.get('version')=='3.3.24-generic-autonomous-battle-c465-access', d
           a=d['asset']; assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'] and int(a['expectedBytes'])==31576440
           assert isinstance(a.get('signedUrl'),str) and a['signedUrl'].startswith('https://')
           PY
