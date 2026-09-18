@@ -16,6 +16,8 @@ from blender.iss_battle_runtime_g05_negative_ack_v1 import (
     STAGE_OUTER,
     STAGE_SOLVER,
     G05NegativeAcknowledgement,
+    G05NegativeAckWindow,
+    negative_ack_confirmed,
     recoverable_post_handoff_nack,
 )
 
@@ -28,6 +30,7 @@ def nack(
     *,
     stage: str,
     reason: str,
+    frame: int = 100,
     handoff: bool = True,
     motor_zero: bool = True,
     event: str = "evt-a",
@@ -35,13 +38,13 @@ def nack(
     target: str = "actor-b",
 ) -> G05NegativeAcknowledgement:
     return G05NegativeAcknowledgement(
-        frame=100,
+        frame=frame,
         event_id=event,
         attacker_id=actor,
         target_id=target,
         stage=stage,
         reason=reason,
-        contact_frame=100,
+        contact_frame=frame,
         controller_handoff=handoff,
         motor_authority_zero=motor_zero,
     )
@@ -70,7 +73,7 @@ def main() -> None:
     assert decision(nack(stage=STAGE_SOLVER, reason="SOLVER_RESPONSE_BELOW_EXISTING_FLOOR")) is True
     assert decision(nack(stage=STAGE_IMPACT_GATE, reason="EXISTING_IMPACT_GATE_REJECTED")) is True
 
-    # Contract regressions must remain visible instead of being hidden by retry/recovery.
+    # Contract regressions remain visible instead of being hidden by retry/recovery.
     assert decision(nack(stage=STAGE_OUTER, reason="CONTROLLER_AUTHORITY_NOT_RELEASED", handoff=False, motor_zero=False)) is False
     assert decision(nack(stage=STAGE_OUTER, reason="TARGET_IDENTITY_MISMATCH")) is False
 
@@ -82,20 +85,48 @@ def main() -> None:
     assert decision(nack(stage=STAGE_OUTER, reason="SEMANTIC_ZONE_MISMATCH", handoff=False)) is False
     assert decision(nack(stage=STAGE_OUTER, reason="SEMANTIC_ZONE_MISMATCH", motor_zero=False)) is False
 
+    # Outer/solver rejections need the existing G05 observation horizon; one-frame
+    # noise cannot force a replan. Gaps reset the streak. Same-frame duplicates do
+    # not inflate the count. Existing-impact-gate rejection is final and immediate.
+    window = G05NegativeAckWindow()
+    assert negative_ack_confirmed(window, nack(stage=STAGE_OUTER, reason="SEMANTIC_ZONE_MISMATCH", frame=100), confirmation_frames=3) is False
+    assert window.consecutive_frames == 1
+    assert negative_ack_confirmed(window, nack(stage=STAGE_SOLVER, reason="CLOSING_SPEED_BELOW_EXISTING_GATE", frame=101), confirmation_frames=3) is False
+    assert window.consecutive_frames == 2
+    assert negative_ack_confirmed(window, nack(stage=STAGE_OUTER, reason="SEMANTIC_ZONE_MISMATCH", frame=102), confirmation_frames=3) is True
+    assert window.consecutive_frames == 3
+    assert negative_ack_confirmed(window, nack(stage=STAGE_OUTER, reason="SEMANTIC_ZONE_MISMATCH", frame=102), confirmation_frames=3) is True
+    assert window.consecutive_frames == 3
+    assert negative_ack_confirmed(window, nack(stage=STAGE_OUTER, reason="SEMANTIC_ZONE_MISMATCH", frame=104), confirmation_frames=3) is False
+    assert window.consecutive_frames == 1 and window.first_frame == 104
+
+    impact_window = G05NegativeAckWindow()
+    assert negative_ack_confirmed(
+        impact_window,
+        nack(stage=STAGE_IMPACT_GATE, reason="EXISTING_IMPACT_GATE_REJECTED", frame=200),
+        confirmation_frames=3,
+    ) is True
+
     combined = helper_text + "\n" + wrapper_text
     for required in (
         "G04_G05_NEGATIVE_ACKNOWLEDGEMENT_RECOVERY_V1",
+        "G05NegativeAckWindow",
+        "negative_ack_confirmed",
+        "candidate42.SOLVER_WINDOW_MAX_FRAMES",
         "_ObservedOuterAuthorityGate",
         "_ObservedPairwiseSolverResponseOracle",
         "_ORIGINAL_OUTER_GATE.evaluate(sample)",
         "_ORIGINAL_SOLVER_ORACLE.evaluate(sample)",
         "G05_PAIRWISE_CONTACT_REJECTED_BY_EXISTING_IMPACT_GATE",
         "G04_G05_NEGATIVE_ACK_OBSERVED",
+        "G04_G05_NEGATIVE_ACK_PENDING_CONFIRMATION",
         "G04_G05_NEGATIVE_ACK_HANDOFF_RELEASED",
         "G04_G05_NEGATIVE_ACK_CONTACT_COMMIT_SUSPENDED",
         "G04_G05_NEGATIVE_ACK_RECOVERY_TRIGGERED",
         "ClosedLoopGoalController._begin_recovery",
         "candidate488.main()",
+        '"negativeAckConfirmationUsesExistingG05SolverWindow": True',
+        '"singleFrameOuterOrSolverNoiseDoesNotForceRecovery": True',
         '"g05SourceChanged": False',
         '"g05OuterGateChanged": False',
         '"g05SolverOracleChanged": False',
@@ -109,7 +140,7 @@ def main() -> None:
     ):
         assert required in combined, required
 
-    # C489 may observe/delegate G05 decisions, but must not copy or weaken G05 thresholds.
+    # C489 observes/delegates G05 decisions but does not copy or weaken G05 gates.
     lowered = combined.lower()
     for forbidden in (
         "bugatti",
@@ -129,7 +160,7 @@ def main() -> None:
     ):
         assert forbidden not in lowered, forbidden
 
-    # C488 remains the inherited handoff implementation; C489 only supplies NACK feedback.
+    # C488 remains the inherited handoff implementation; C489 adds feedback only.
     assert "G04_EVENT_SCOPED_ENGAGEMENT_AUTHORITY_V2" in c488_text
     assert "currentClosingSignRequiredAfterCertifiedProximity\": False" in c488_text
 
@@ -141,6 +172,9 @@ def main() -> None:
         "outerGeometryNackRecovery": "PASS",
         "solverNackRecovery": "PASS",
         "impactGateNackRecovery": "PASS",
+        "existingG05ObservationWindowPreserved": "PASS",
+        "singleFrameNackNoiseRejected": "PASS",
+        "consecutiveNackConfirmation": "PASS",
         "controllerAuthorityRegressionVisible": "PASS",
         "targetIdentityRegressionVisible": "PASS",
         "eventActorTargetIsolation": "PASS",
