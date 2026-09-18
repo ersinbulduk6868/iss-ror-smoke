@@ -66,7 +66,11 @@ def _approach_active(key: tuple[str, str, str]) -> bool:
     lifecycle = candidate487._lifecycle_memories.get(key)
     context = candidate474._pending_tactical_context or {}
     mode = str(context.get("currentTacticalMode") or "").upper()
-    return bool(lifecycle is not None and str(lifecycle.phase) == PHASE_APPROACH and mode in CONTACT_CORRIDOR_MODES)
+    return bool(
+        lifecycle is not None
+        and str(lifecycle.phase) == PHASE_APPROACH
+        and mode in CONTACT_CORRIDOR_MODES
+    )
 
 
 def _record_precontact_sample(key: tuple[str, str, str], pair: dict[str, Any], obs: Any) -> None:
@@ -94,9 +98,14 @@ def _record_precontact_sample(key: tuple[str, str, str], pair: dict[str, Any], o
     ):
         return
     sample = PrecontactRealizationSample(
-        frame=int(obs.frame), event_id=key[0], actor_id=key[1], target_id=key[2],
-        forward_speed_mps=float(obs.forward_speed_mps), closing_speed_mps=float(obs.closing_speed_mps),
-        capability_floor_mps=float(readiness.capability_floor_mps), effective_gap_m=float(effective_gap),
+        frame=int(obs.frame),
+        event_id=key[0],
+        actor_id=key[1],
+        target_id=key[2],
+        forward_speed_mps=float(obs.forward_speed_mps),
+        closing_speed_mps=float(obs.closing_speed_mps),
+        capability_floor_mps=float(readiness.capability_floor_mps),
+        effective_gap_m=float(effective_gap),
         handoff_gap_m=float(handoff_gap),
     )
     _samples[key] = sample
@@ -104,25 +113,43 @@ def _record_precontact_sample(key: tuple[str, str, str], pair: dict[str, Any], o
         _announced.add(key)
         marker(
             "G04_PRECONTACT_REALIZATION_SAMPLE_ARMED",
-            frame=int(obs.frame), eventId=key[0], attackerId=key[1], targetId=key[2] or None,
+            frame=int(obs.frame),
+            eventId=key[0],
+            attackerId=key[1],
+            targetId=key[2] or None,
             realizedForwardSpeedMps=round(sample.forward_speed_mps, 6),
             realizedClosingSpeedMps=round(sample.closing_speed_mps, 6),
             capabilityFloorMps=round(sample.capability_floor_mps, 6),
             effectiveCollisionProxyGapM=round(sample.effective_gap_m, 6),
-            existingHandoffGapM=round(sample.handoff_gap_m, 6), model=MECHANISM,
+            existingHandoffGapM=round(sample.handoff_gap_m, 6),
+            model=MECHANISM,
         )
 
 
-def _handoff_with_preserved_alignment(memory: Any, obs: Any, *, recovery_bias: float, key: tuple[str, str, str], sample: PrecontactRealizationSample) -> Any:
+def _handoff_with_preserved_alignment(
+    memory: Any,
+    obs: Any,
+    *,
+    recovery_bias: float,
+    key: tuple[str, str, str],
+    sample: PrecontactRealizationSample,
+) -> Any:
     pair_key = (key[1], key[2])
     motor_obs = replace(obs, requires_contact=False)
-    motor_probe = candidate485._BASE_AUTONOMY_UPDATE(replace(memory), motor_obs, recovery_bias=recovery_bias)
+    motor_probe = candidate485._BASE_AUTONOMY_UPDATE(
+        replace(memory), motor_obs, recovery_bias=recovery_bias
+    )
     prospective_forward = float(motor_probe.forward_speed_mps)
     prospective_yaw = float(motor_probe.yaw_rate_rad_s)
     characteristic_length = max(0.0, float(obs.characteristic_length_m))
-    rotational_nose_speed = rotational_nose_speed_mps(yaw_rate_rad_s=prospective_yaw, characteristic_length_m=characteristic_length)
+    rotational_nose_speed = rotational_nose_speed_mps(
+        yaw_rate_rad_s=prospective_yaw,
+        characteristic_length_m=characteristic_length,
+    )
     translation_dominant = translation_dominates_rotation(
-        forward_speed_mps=prospective_forward, yaw_rate_rad_s=prospective_yaw, characteristic_length_m=characteristic_length
+        forward_speed_mps=prospective_forward,
+        yaw_rate_rad_s=prospective_yaw,
+        characteristic_length_m=characteristic_length,
     )
     defer_alignment = should_defer_handoff_for_alignment(
         contact_handoff_requested=True,
@@ -136,42 +163,74 @@ def _handoff_with_preserved_alignment(memory: Any, obs: Any, *, recovery_bias: f
             candidate485._alignment_defer_active.add(pair_key)
             marker(
                 "G04_CONTACT_HANDOFF_DEFERRED_BY_ROTATIONAL_DOMINANCE",
-                frame=int(obs.frame), attackerId=key[1], targetId=key[2] or None,
-                prospectiveMotorAuthority=str(motor_probe.motor_authority), prospectiveForwardSpeedMps=prospective_forward,
-                prospectiveYawRateRadS=prospective_yaw, rotationalNoseSpeedMps=rotational_nose_speed,
-                characteristicLengthM=characteristic_length, translationDominant=translation_dominant,
+                frame=int(obs.frame),
+                attackerId=key[1],
+                targetId=key[2] or None,
+                prospectiveMotorAuthority=str(motor_probe.motor_authority),
+                prospectiveForwardSpeedMps=prospective_forward,
+                prospectiveYawRateRadS=prospective_yaw,
+                rotationalNoseSpeedMps=rotational_nose_speed,
+                characteristicLengthM=characteristic_length,
+                translationDominant=translation_dominant,
                 model=HANDOFF_ALIGNMENT_MODEL,
             )
-        return candidate485._BASE_AUTONOMY_UPDATE(memory, motor_obs, recovery_bias=recovery_bias)
+        return candidate485._BASE_AUTONOMY_UPDATE(
+            memory, motor_obs, recovery_bias=recovery_bias
+        )
     if pair_key in candidate485._alignment_defer_active:
         candidate485._alignment_defer_active.discard(pair_key)
         marker(
             "G04_CONTACT_HANDOFF_ALIGNMENT_READY",
-            frame=int(obs.frame), attackerId=key[1], targetId=key[2] or None,
-            prospectiveMotorAuthority=str(motor_probe.motor_authority), prospectiveForwardSpeedMps=prospective_forward,
-            prospectiveYawRateRadS=prospective_yaw, rotationalNoseSpeedMps=rotational_nose_speed,
-            characteristicLengthM=characteristic_length, translationDominant=translation_dominant,
+            frame=int(obs.frame),
+            attackerId=key[1],
+            targetId=key[2] or None,
+            prospectiveMotorAuthority=str(motor_probe.motor_authority),
+            prospectiveForwardSpeedMps=prospective_forward,
+            prospectiveYawRateRadS=prospective_yaw,
+            rotationalNoseSpeedMps=rotational_nose_speed,
+            characteristicLengthM=characteristic_length,
+            translationDominant=translation_dominant,
             model=HANDOFF_ALIGNMENT_MODEL,
         )
     marker(
         "G04_PRECONTACT_REALIZATION_CARRIED_TO_HANDOFF",
-        frame=int(obs.frame), eventId=key[0], attackerId=key[1], targetId=key[2] or None,
-        evidenceFrame=int(sample.frame), evidenceAgeFrames=int(obs.frame)-int(sample.frame),
-        evidenceForwardSpeedMps=round(sample.forward_speed_mps, 6), evidenceClosingSpeedMps=round(sample.closing_speed_mps, 6),
-        evidenceCapabilityFloorMps=round(sample.capability_floor_mps, 6), currentClosingSpeedMps=round(float(obs.closing_speed_mps), 6),
-        frameOrder="PHYSICS_SAMPLE_G05_DETECT_G04_CONTROLS", model=MECHANISM,
+        frame=int(obs.frame),
+        eventId=key[0],
+        attackerId=key[1],
+        targetId=key[2] or None,
+        evidenceFrame=int(sample.frame),
+        evidenceAgeFrames=int(obs.frame) - int(sample.frame),
+        evidenceForwardSpeedMps=round(sample.forward_speed_mps, 6),
+        evidenceClosingSpeedMps=round(sample.closing_speed_mps, 6),
+        evidenceCapabilityFloorMps=round(sample.capability_floor_mps, 6),
+        currentClosingSpeedMps=round(float(obs.closing_speed_mps), 6),
+        frameOrder="PHYSICS_SAMPLE_G05_DETECT_G04_CONTROLS",
+        model=MECHANISM,
     )
     marker(
         "G04_CONTACT_HANDOFF_REALIZED_APPROACH_READY",
-        frame=int(obs.frame), attackerId=key[1], targetId=key[2] or None,
-        capabilityFloorMps=sample.capability_floor_mps, realizedForwardSpeedMps=sample.forward_speed_mps,
-        realizedClosingSpeedMps=sample.closing_speed_mps, characteristicLengthM=float(obs.characteristic_length_m),
-        evidenceFrame=int(sample.frame), evidenceSource="IMMEDIATELY_PREVIOUS_PRECONTACT_FRAME", model=candidate485.MECHANISM,
+        frame=int(obs.frame),
+        attackerId=key[1],
+        targetId=key[2] or None,
+        capabilityFloorMps=sample.capability_floor_mps,
+        realizedForwardSpeedMps=sample.forward_speed_mps,
+        realizedClosingSpeedMps=sample.closing_speed_mps,
+        characteristicLengthM=float(obs.characteristic_length_m),
+        evidenceFrame=int(sample.frame),
+        evidenceSource="IMMEDIATELY_PREVIOUS_PRECONTACT_FRAME",
+        model=candidate485.MECHANISM,
     )
-    return candidate485._BASE_AUTONOMY_UPDATE(memory, obs, recovery_bias=recovery_bias)
+    return candidate485._BASE_AUTONOMY_UPDATE(
+        memory, obs, recovery_bias=recovery_bias
+    )
 
 
-def c488_1_realized_handoff_update(memory: Any, obs: Any, *, recovery_bias: float = 1.0) -> Any:
+def c488_1_realized_handoff_update(
+    memory: Any,
+    obs: Any,
+    *,
+    recovery_bias: float = 1.0,
+) -> Any:
     key, pair = _transaction_and_pair()
     if is_recovery_mode(str(memory.mode or "")):
         _samples.pop(key, None)
@@ -179,15 +238,23 @@ def c488_1_realized_handoff_update(memory: Any, obs: Any, *, recovery_bias: floa
         return _C485_REALIZED_UPDATE(memory, obs, recovery_bias=recovery_bias)
 
     _record_precontact_sample(key, pair, obs)
-    probe = candidate485._BASE_AUTONOMY_UPDATE(replace(memory), obs, recovery_bias=recovery_bias)
-    handoff_requested = bool(str(probe.motor_authority).upper() == "COAST" and str(probe.mode).upper() == "CONTACT_HANDOFF")
+    probe = candidate485._BASE_AUTONOMY_UPDATE(
+        replace(memory), obs, recovery_bias=recovery_bias
+    )
+    handoff_requested = bool(
+        str(probe.motor_authority).upper() == "COAST"
+        and str(probe.mode).upper() == "CONTACT_HANDOFF"
+    )
     if not handoff_requested:
         return _C485_REALIZED_UPDATE(memory, obs, recovery_bias=recovery_bias)
 
     current = realized_contact_handoff_readiness(
-        max_speed_mps=float(obs.max_speed_mps), acceleration_mps2=float(obs.acceleration_mps2),
-        characteristic_length_m=float(obs.characteristic_length_m), drive_efficiency=float(obs.drive_efficiency),
-        realized_forward_speed_mps=float(obs.forward_speed_mps), realized_closing_speed_mps=float(obs.closing_speed_mps),
+        max_speed_mps=float(obs.max_speed_mps),
+        acceleration_mps2=float(obs.acceleration_mps2),
+        characteristic_length_m=float(obs.characteristic_length_m),
+        drive_efficiency=float(obs.drive_efficiency),
+        realized_forward_speed_mps=float(obs.forward_speed_mps),
+        realized_closing_speed_mps=float(obs.closing_speed_mps),
     )
     if current.ready:
         _samples.pop(key, None)
@@ -207,30 +274,65 @@ def c488_1_realized_handoff_update(memory: Any, obs: Any, *, recovery_bias: floa
 
     _samples.pop(key, None)
     _announced.discard(key)
-    return _handoff_with_preserved_alignment(memory, obs, recovery_bias=recovery_bias, key=key, sample=sample)
+    return _handoff_with_preserved_alignment(
+        memory, obs, recovery_bias=recovery_bias, key=key, sample=sample
+    )
 
 
 def main() -> None:
     _samples.clear()
     _announced.clear()
-    candidate485.realized_and_alignment_aware_base_autonomy_update = c488_1_realized_handoff_update
-    print(json.dumps({
-        "marker":"GENERIC_AUTONOMOUS_BATTLE_C488_1_ENGINEERING_READY",
-        "candidate":CANDIDATE,"mechanism":MECHANISM,"affectedLayerAudit":AUDIT,"affectedLayerAuditStatus":"PASS",
-        "failureFamily":FAILURE_FAMILY,"c488RejectedBySourceAudit":True,"previousFrameOnlyEvidence":True,
-        "eventActorTargetScopedEvidence":True,"staleEvidenceRejected":True,"recoveryEvidenceRejected":True,
-        "currentNonNegativeClosingRequired":True,"precontactOutsideExistingHandoffGapRequired":True,
-        "runtimeFrameOrderVerified":"PHYSICS_SAMPLE_THEN_G05_DETECT_THEN_G04_CONTROLS",
-        "c487LifecyclePreserved":True,"c485CapabilityFloorPreserved":True,"c484AlignmentSemanticsPreserved":True,
-        "c465CutoffFrameStabilityPreserved":True,"g05NativeSolverFinalAuthorityPreserved":True,
-        "g05SourceChanged":False,"g06SourceChanged":False,"g07SourceChanged":False,"g08SourceChanged":False,
-        "g05ThresholdImported":False,"contactThresholdChanged":False,"semanticToleranceChanged":False,
-        "localityToleranceChanged":False,"damageAdmissionThresholdChanged":False,"assetIdentityBranch":False,
-        "perAssetBattleCode":False,"perAssetTacticalTuning":False,"perVideoTrajectoryEngineering":False,
-        "fixedWorldCoordinates":False,"exactCollisionFrameTarget":False,"exactImpactEnergyTarget":False,
-        "actorPoseOrVelocityMutation":False,"fixtureBattlePlanChanged":False,"frozenNineServiceArchitectureChanged":False,
-        "gateClosed":False,"productionReadyClaimed":False
-    },sort_keys=True),flush=True))
+    candidate485.realized_and_alignment_aware_base_autonomy_update = (
+        c488_1_realized_handoff_update
+    )
+    print(
+        json.dumps(
+            {
+                "marker": "GENERIC_AUTONOMOUS_BATTLE_C488_1_ENGINEERING_READY",
+                "candidate": CANDIDATE,
+                "mechanism": MECHANISM,
+                "affectedLayerAudit": AUDIT,
+                "affectedLayerAuditStatus": "PASS",
+                "failureFamily": FAILURE_FAMILY,
+                "c488RejectedBySourceAudit": True,
+                "previousFrameOnlyEvidence": True,
+                "eventActorTargetScopedEvidence": True,
+                "staleEvidenceRejected": True,
+                "recoveryEvidenceRejected": True,
+                "currentNonNegativeClosingRequired": True,
+                "precontactOutsideExistingHandoffGapRequired": True,
+                "runtimeFrameOrderVerified": "PHYSICS_SAMPLE_THEN_G05_DETECT_THEN_G04_CONTROLS",
+                "c487LifecyclePreserved": True,
+                "c485CapabilityFloorPreserved": True,
+                "c484AlignmentSemanticsPreserved": True,
+                "c465CutoffFrameStabilityPreserved": True,
+                "g05NativeSolverFinalAuthorityPreserved": True,
+                "g05SourceChanged": False,
+                "g06SourceChanged": False,
+                "g07SourceChanged": False,
+                "g08SourceChanged": False,
+                "g05ThresholdImported": False,
+                "contactThresholdChanged": False,
+                "semanticToleranceChanged": False,
+                "localityToleranceChanged": False,
+                "damageAdmissionThresholdChanged": False,
+                "assetIdentityBranch": False,
+                "perAssetBattleCode": False,
+                "perAssetTacticalTuning": False,
+                "perVideoTrajectoryEngineering": False,
+                "fixedWorldCoordinates": False,
+                "exactCollisionFrameTarget": False,
+                "exactImpactEnergyTarget": False,
+                "actorPoseOrVelocityMutation": False,
+                "fixtureBattlePlanChanged": False,
+                "frozenNineServiceArchitectureChanged": False,
+                "gateClosed": False,
+                "productionReadyClaimed": False,
+            },
+            sort_keys=True,
+        ),
+        flush=True,
+    )
     candidate486.main = candidate485.main
     candidate487.main()
 
