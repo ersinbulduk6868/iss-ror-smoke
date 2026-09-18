@@ -99,6 +99,7 @@ jobs:
               f.write('BUGATTI_SOURCE_URL='+s['signedUrl']+'\n')
           print('C476_EXACT_BUGATTI_ACCESS=PASS')
           PY
+          BUGATTI_SOURCE_URL="$(python3 -c "import json; print(json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))['asset']['signedUrl'])")"
           export BUGATTI_SOURCE_URL
           python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee c476-bugatti-asset.log
           grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' c476-bugatti-asset.log
