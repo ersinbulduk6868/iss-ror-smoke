@@ -1,0 +1,284 @@
+name: ISS Generic Autonomous Battle Candidate 4.6.7 Cross-Gate Acceptance
+
+on:
+  push:
+    branches: [iss-engineering/generic-battle-runtime-v1]
+    paths:
+      - '.github/workflows/generic-autonomous-battle-c467-run.yml'
+
+concurrency:
+  group: iss-generic-autonomous-battle-c467-run
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  BLENDER_VERSION: '4.5.13'
+  EXPECTED_BUGATTI_SHA: '8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+  ASSET_ACCESS_CONTRACT: 'iss-bugatti-pair-access-v1'
+  ASSET_ACCESS_URL: 'https://hnszvqlgqatsgbuchewt.supabase.co/functions/v1/iss-final-video-transfer-once'
+  SUPABASE_ANON_JWT_FROM_VAR: ${{ vars.SUPABASE_ANON_JWT }}
+
+jobs:
+  c467:
+    name: Candidate 4.6.7 semantic handoff transaction acceptance
+    runs-on: ubuntu-22.04
+    timeout-minutes: 48
+    steps:
+      - name: Checkout C467
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Full affected-layer preflight and locked-contract preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile \
+            blender/iss_battle_runtime_handoff_v1.py \
+            blender/iss_battle_runtime_handoff_v2.py \
+            blender/iss_battle_runtime_tactics_v5.py \
+            blender/iss_battle_runtime_generic_battle_v6.py \
+            blender/run_generic_battle_runtime_v1_candidate465_generic_battle.py \
+            blender/run_generic_battle_runtime_v1_candidate466_generic_battle.py \
+            blender/run_generic_battle_runtime_v1_candidate467_generic_battle.py \
+            tools/validate_generic_autonomous_battle_c464.py \
+            tools/validate_generic_autonomous_battle_c465.py \
+            tools/validate_generic_autonomous_battle_c466.py \
+            tools/validate_generic_autonomous_battle_c467.py \
+            tools/validate_generic_autonomous_battle_c464_result.py \
+            tools/validate_generic_autonomous_battle_c465_result.py \
+            tools/validate_generic_autonomous_battle_c466_result.py \
+            tools/validate_generic_autonomous_battle_c467_result.py
+
+          python3 tools/validate_generic_autonomous_battle_c464.py | tee c467-c464-property.log
+          grep -q '"status": "PASS"' c467-c464-property.log
+          python3 tools/validate_generic_autonomous_battle_c465.py | tee c467-c465-property.log
+          grep -q '"status": "PASS"' c467-c465-property.log
+          python3 tools/validate_generic_autonomous_battle_c466.py | tee c467-c466-property.log
+          grep -q '"status": "PASS"' c467-c466-property.log
+          python3 tools/validate_generic_autonomous_battle_c467.py | tee c467-property.log
+          grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C467_PROPERTY_ACCEPTANCE"' c467-property.log
+          grep -q '"status": "PASS"' c467-property.log
+          grep -q '"semanticSelectionAdaptiveOutsideHandoff": true' c467-property.log
+          grep -q '"semanticSelectionFrozenWithinHandoff": true' c467-property.log
+          grep -q '"existingG07ResolverReusedUnchanged": true' c467-property.log
+          grep -q '"existingG05DetectorReusedUnchanged": true' c467-property.log
+          grep -q '"semanticToleranceChanged": false' c467-property.log
+          grep -q '"localityToleranceChanged": false' c467-property.log
+          grep -q '"contactThresholdChanged": false' c467-property.log
+          grep -q '"damageAdmissionThresholdChanged": false' c467-property.log
+          grep -q '"fixtureMutationForAcceptance": false' c467-property.log
+
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate467_generic_battle.py)" = '93032486b99fe05615aea290191c919e206953e6'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c467.py)" = '012964da2a31216682af8f58a81a268390f1fcbd'
+          test "$(git hash-object tools/validate_generic_autonomous_battle_c467_result.py)" = '506712b7d8890c779cb9258264b51e337d2fdb50'
+
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate42.py)" = 'a6e8f624f1897f965b7fa1c87ea74afab3eaeeff'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate443.py)" = '358d34c437ee27d3115117f0aaa1139704277212'
+          test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate446.py)" = '0a09826e539b51aebf720e3d39b7a1ba9aee733b'
+          test "$(git hash-object blender/iss_battle_runtime_contract.py)" = '17860a4945d41316793e2a807585d8486a8e65ef'
+          test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
+          test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
+          test "$(git hash-object blender/iss_battle_runtime_consequences.py)" = 'ff239d56b823e31046db9ad300932f82262cbb39'
+          test "$(git hash-object blender/iss_blender_battle_runtime_v1_hardened.py)" = 'a9694d22697e1de077415f1198d88df5fa07d00a'
+          echo 'C467_FULL_AFFECTED_LAYER_PREFLIGHT=PASS'
+
+      - name: Resolve exact Bugatti through allowlisted control plane
+        shell: bash
+        run: |
+          set -euo pipefail
+          ANON="$SUPABASE_ANON_JWT_FROM_VAR"
+          if [ -z "$ANON" ]; then
+            ANON="$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text=Path('.github/workflows/generic-battle-runtime-v1-candidate42-g05.yml').read_text(encoding='utf-8')
+          m=re.search(r"SUPABASE_ANON_JWT:\s*'([^']+)'", text)
+          if not m: raise SystemExit('PROVEN_G05_ANON_BOOTSTRAP_NOT_FOUND')
+          print(m.group(1))
+          PY
+            )"
+          fi
+          echo "::add-mask::$ANON"
+          mkdir -p artifacts/visual-vnext-rc2-preflight
+          OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-visual-vnext-rc2-assets" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
+          curl --fail --silent --show-error \
+            -H "apikey: $ANON" -H "Authorization: Bearer $ANON" -H "x-github-oidc: $OIDC" \
+            -H 'Content-Type: application/json' --data '{"mode":"resolve_bugatti_pair"}' \
+            "$ASSET_ACCESS_URL" > artifacts/visual-vnext-rc2-preflight/asset-access.json
+          python3 - <<'PY'
+          import json,os
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))
+          assert d.get('success') is True and d.get('status')=='BUGATTI_PAIR_ACCESS_READY', d
+          assert d.get('contractVersion')==os.environ['ASSET_ACCESS_CONTRACT'], d
+          assert d.get('version')=='3.3.26-generic-autonomous-battle-c467-access', d
+          a=d['asset']
+          assert a['expectedSha256']==os.environ['EXPECTED_BUGATTI_SHA'], a
+          assert int(a['expectedBytes'])==31576440, a
+          assert isinstance(a.get('signedUrl'),str) and a['signedUrl'].startswith('https://'), a
+          PY
+          BUGATTI_SOURCE_URL="$(python3 - <<'PY'
+          import json
+          print(json.load(open('artifacts/visual-vnext-rc2-preflight/asset-access.json'))['asset']['signedUrl'])
+          PY
+          )"
+          echo "::add-mask::$BUGATTI_SOURCE_URL"
+          echo "BUGATTI_SOURCE_URL=$BUGATTI_SOURCE_URL" >> "$GITHUB_ENV"
+          export BUGATTI_SOURCE_URL
+          python3 tools/visual_vnext_rc2_bugatti_duel_asset_preflight.py 2>&1 | tee c467-asset.log
+          grep -q 'BUGATTI_DUEL_EXACT_SHA=PASS' c467-asset.log
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          d=json.load(open('artifacts/visual-vnext-rc2-preflight/assets.json'))
+          a=d['assets']['bugattiA']; b=d['assets']['bugattiB']
+          assert a['identity']['primarySceneSha256']==b['identity']['primarySceneSha256']=='8cc074c40fe9ced7271cbeddf223cd9a520dee868977ffcbd439cec1c2b62cb4'
+          print('BUGATTI_PRIMARY='+a['primaryScene'])
+          PY
+          echo 'C467_EXACT_BUGATTI_ACCESS=PASS'
+
+      - name: Build unchanged intent-only fixtures and choreography firewall
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/build_generic_battle_runtime_v1_candidate446_g07.py --bugatti-primary "$BUGATTI_PRIMARY" | tee c467-fixtures.log
+          grep -q 'GENERIC_BATTLE_RUNTIME_CANDIDATE446_G07_FIXTURES_PASS' c467-fixtures.log
+          SRC=artifacts/generic-battle-runtime-v1-candidate446-g07
+          DST=artifacts/generic-autonomous-battle-c467
+          mkdir -p "$DST/exact-bugatti" "$DST/generic-hypercar"
+          for NAME in exact-bugatti generic-hypercar; do
+            cp "$SRC/$NAME/request.json" "$DST/$NAME/request.json"
+            cp "$SRC/$NAME/asset-map.json" "$DST/$NAME/asset-map.json"
+            test "$(sha256sum "$SRC/$NAME/request.json" | awk '{print $1}')" = "$(sha256sum "$DST/$NAME/request.json" | awk '{print $1}')"
+            test "$(sha256sum "$SRC/$NAME/asset-map.json" | awk '{print $1}')" = "$(sha256sum "$DST/$NAME/asset-map.json" | awk '{print $1}')"
+          done
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('artifacts/generic-autonomous-battle-c467')
+          forbidden=('collisionframe','contactframe','impactframe','targetenergyj','impactenergyj','targetimpactspeedmps','trajectorypoints','pathpoints','waypoints','positionkeyframes','velocitykeyframes','steeringangle','brakingpoint','approachvector','collisionpoint','contactpoint','forcedwinner','winnerid')
+          report={}
+          for name in ('exact-bugatti','generic-hypercar'):
+            data=json.loads((root/name/'request.json').read_text(encoding='utf-8'))
+            events={str(e.get('eventId')):e for e in data['battlePlan']['events']}
+            physical=[]
+            for event_id in ('evt-escalation','evt-counterattack'):
+              event=events[event_id]
+              target=str(event.get('attackTarget') or '')
+              assert target and ':' not in target
+              req=event.get('physicsRequirements') or {}
+              assert set(req)=={'minQualifiedContacts','minDistinctAttackers'}
+              damage=event.get('damage') or {}
+              assert not bool(damage.get('required'))
+              assert not str(damage.get('zone') or '').strip()
+              assert not str(req.get('targetArea') or '').strip()
+              physical.append(event_id)
+            raw=json.dumps(data,sort_keys=True).lower()
+            for token in forbidden: assert token not in raw, (name,token)
+            report[name]=physical
+          out={'contract':'ISS_C467_UNCHANGED_INTENT_FIXTURE_FIREWALL_V1','fixtureMutationForAcceptance':False,'storyDamageRequirementIntroduced':False,'storyTargetZoneIntroduced':False,'exactImpactEnergyTarget':False,'exactImpactSpeedTarget':False,'collisionPointTarget':False,'perAssetTuning':False,'physicalEvents':report}
+          (root/'c467-intent-firewall.json').write_text(json.dumps(out,indent=2,sort_keys=True),encoding='utf-8')
+          print(json.dumps(out,sort_keys=True))
+          PY
+          echo 'C467_UNCHANGED_INTENT_ONLY_FIXTURES=PASS'
+
+      - name: Install exact Blender 4.5.13
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update >/dev/null
+          sudo apt-get install -y --no-install-recommends xz-utils unzip libgl1 libegl1 libx11-6 libxi6 libxrender1 libxfixes3 libxxf86vm1 libxkbcommon0 >/dev/null
+          mkdir -p .blender
+          curl --fail --location --retry 3 --retry-all-errors "https://download.blender.org/release/Blender4.5/blender-${BLENDER_VERSION}-linux-x64.tar.xz" -o .blender/blender.tar.xz
+          tar -xJf .blender/blender.tar.xz -C .blender
+          BLENDER_BIN="$GITHUB_WORKSPACE/.blender/blender-${BLENDER_VERSION}-linux-x64/blender"
+          "$BLENDER_BIN" --version | tee c467-blender-version.log
+          grep -q "Blender ${BLENDER_VERSION}" c467-blender-version.log
+          echo "BLENDER_BIN=$BLENDER_BIN" >> "$GITHUB_ENV"
+
+      - name: Run exact Bugatti C467 battle
+        timeout-minutes: 14
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-autonomous-battle-c467/exact-bugatti
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate467_generic_battle.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee c467-bugatti-runtime.log
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_C467_ENGINEERING_READY' c467-bugatti-runtime.log
+          grep -q 'GENERIC_HANDOFF_SEMANTIC_SURFACE_FROZEN' c467-bugatti-runtime.log
+          grep -q 'GENERIC_SOLVER_HANDOFF_CUTOFF_FRAME_STABILIZED' c467-bugatti-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' c467-bugatti-runtime.log
+          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_V3_APPLIED' c467-bugatti-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' c467-bugatti-runtime.log
+          grep -q 'G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN' c467-bugatti-runtime.log
+          grep -q '"success": true' c467-bugatti-runtime.log
+
+      - name: Run generic hypercar C467 battle
+        timeout-minutes: 14
+        shell: bash
+        env:
+          PYTHONUNBUFFERED: '1'
+        run: |
+          set -euo pipefail
+          D=artifacts/generic-autonomous-battle-c467/generic-hypercar
+          "$BLENDER_BIN" --background --factory-startup --python-exit-code 1 --python blender/run_generic_battle_runtime_v1_candidate467_generic_battle.py -- --request "$D/request.json" --asset-map "$D/asset-map.json" --output-dir "$D" 2>&1 | tee c467-generic-runtime.log
+          grep -q 'GENERIC_AUTONOMOUS_BATTLE_C467_ENGINEERING_READY' c467-generic-runtime.log
+          grep -q 'GENERIC_HANDOFF_SEMANTIC_SURFACE_FROZEN' c467-generic-runtime.log
+          grep -q 'GENERIC_SOLVER_HANDOFF_CUTOFF_FRAME_STABILIZED' c467-generic-runtime.log
+          grep -q 'PAIRWISE_NATIVE_SOLVER_CONTACT_VERIFIED' c467-generic-runtime.log
+          grep -q 'CAUSAL_VISIBLE_IMPACT_CONSEQUENCE_V3_APPLIED' c467-generic-runtime.log
+          grep -q 'G07_CAUSAL_CLIMAX_STATE_REALIZED' c467-generic-runtime.log
+          grep -q 'G08_CINEMATIC_SALIENCE_EVIDENCE_WRITTEN' c467-generic-runtime.log
+          grep -q '"success": true' c467-generic-runtime.log
+
+      - name: Strict C467 cross-gate machine acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT=artifacts/generic-autonomous-battle-c467
+          python3 tools/validate_generic_autonomous_battle_c467_result.py \
+            --bugatti-battle "$ROOT/exact-bugatti/generic-autonomous-battle-v6-evidence.json" \
+            --bugatti-g06 "$ROOT/exact-bugatti/g06-persistence-evidence.json" \
+            --bugatti-g07 "$ROOT/exact-bugatti/g07-causal-drama-evidence.json" \
+            --bugatti-g08 "$ROOT/exact-bugatti/g08-camera-evidence.json" \
+            --bugatti-log c467-bugatti-runtime.log \
+            --generic-battle "$ROOT/generic-hypercar/generic-autonomous-battle-v6-evidence.json" \
+            --generic-g06 "$ROOT/generic-hypercar/g06-persistence-evidence.json" \
+            --generic-g07 "$ROOT/generic-hypercar/g07-causal-drama-evidence.json" \
+            --generic-g08 "$ROOT/generic-hypercar/g08-camera-evidence.json" \
+            --generic-log c467-generic-runtime.log | tee c467-machine.log
+          grep -q '"marker": "GENERIC_AUTONOMOUS_BATTLE_C467_MACHINE_ACCEPTANCE"' c467-machine.log
+          grep -q '"status": "PASS"' c467-machine.log
+          grep -q '"semanticSelectionFrozenWithinHandoff": "PASS"' c467-machine.log
+          grep -q '"secondNativeContact": "PASS"' c467-machine.log
+          grep -q '"twoSidedDamage": "PASS"' c467-machine.log
+          grep -q '"visibleCausalDamageDebris": "PASS"' c467-machine.log
+          grep -q '"contactThresholdChanged": false' c467-machine.log
+          grep -q '"damageAdmissionThresholdChanged": false' c467-machine.log
+          grep -q '"fixtureMutationForAcceptance": false' c467-machine.log
+          grep -q '"humanCinematicAcceptance": "PENDING"' c467-machine.log
+          echo 'ISS_GENERIC_AUTONOMOUS_BATTLE_C467_MACHINE_ACCEPTANCE=PASS_HUMAN_REVIEW_PENDING'
+
+      - name: Write C467 manifest
+        if: always()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json,pathlib,os
+          root=pathlib.Path('artifacts/generic-autonomous-battle-c467'); root.mkdir(parents=True,exist_ok=True)
+          out={'candidate':'ISS_GENERIC_BATTLE_RUNTIME_V1_CANDIDATE_4_6_7_GENERIC_AUTONOMOUS_BATTLE','mechanism':'LIVE_SEMANTIC_SURFACE_HANDOFF_TRANSACTION_V1','failureFamily':'SEMANTIC_TARGET_MUTATES_DURING_ACTIVE_SOLVER_HANDOFF_TRANSACTION','affectedLayerAudit':'SEMANTIC_SELECTION_HANDOFF_TRANSACTION_FULL_AFFECTED_LAYER_AUDIT_20260918','existingG07ResolverReusedUnchanged':True,'existingG05DetectorReusedUnchanged':True,'semanticSelectionAdaptiveOutsideHandoff':True,'semanticSelectionFrozenWithinHandoff':True,'fixtureMutationForAcceptance':False,'semanticToleranceChanged':False,'localityToleranceChanged':False,'contactThresholdChanged':False,'damageAdmissionThresholdChanged':False,'headSha':os.environ.get('GITHUB_SHA'),'humanCinematicAcceptance':'PENDING_FRESH_REVIEW','gateClosed':False,'productionReadyClaimed':False}
+          (root/'c467-acceptance-manifest.json').write_text(json.dumps(out,indent=2,sort_keys=True),encoding='utf-8')
+          PY
+
+      - name: Upload C467 evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: iss-generic-autonomous-battle-c467-${{ github.run_id }}
+          path: |
+            c467-*.log
+            artifacts/generic-autonomous-battle-c467
+            artifacts/visual-vnext-rc2-preflight/asset-access.json
+          if-no-files-found: warn
+          retention-days: 30
