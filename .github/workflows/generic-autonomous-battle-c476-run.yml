@@ -51,7 +51,6 @@ jobs:
             blender/run_generic_battle_runtime_v1_candidate476_generic_battle.py \
             tools/validate_generic_autonomous_battle_c474_result.py \
             tools/validate_generic_autonomous_battle_c476_result.py
-
           test "$(git hash-object blender/run_generic_battle_runtime_v1_candidate474_generic_battle.py)" = '341dc1718de47c1c8d8e3022f8117012535a0fca'
           test "$(git hash-object blender/iss_battle_runtime_autonomy.py)" = 'd349c51b289266740df7615d37dc645839001641'
           test "$(git hash-object blender/iss_battle_runtime_contact_truth.py)" = '9041178dd7d1a3951912e49ee398e8fa423da730'
@@ -116,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           OIDC="$(curl --fail --silent --show-error -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=iss-asset-provider-smoke" | python3 -c 'import json,sys; print(json.load(sys.stdin)["value"])')"
-          curl --fail --silent --show-error \
+          curl --fail-with-body --silent --show-error \
             -H "Authorization: Bearer $OIDC" \
             -H 'Content-Type: application/json' \
             --data "{\"mode\":\"signed_source_download\",\"uid\":\"$BULLDOZER_UID\"}" \
@@ -228,7 +227,7 @@ jobs:
           assert a.acceleration_mps2 > z.acceleration_mps2
           assert a.max_yaw_rate_rad_s > z.max_yaw_rate_rad_s
           assert z.toughness_j_per_kg > a.toughness_j_per_kg
-          print(json.dumps({'marker':'C476_HETEROGENEOUS_PROFILE_PREFLIGHT','status':'PASS','bugatti':a.snapshot() if hasattr(a,'snapshot') else {'massKg':a.mass_kg,'maxSpeedMps':a.max_speed_mps,'maxYawRateRadS':a.max_yaw_rate_rad_s},'bulldozer':z.snapshot() if hasattr(z,'snapshot') else {'massKg':z.mass_kg,'maxSpeedMps':z.max_speed_mps,'maxYawRateRadS':z.max_yaw_rate_rad_s}},sort_keys=True))
+          print(json.dumps({'marker':'C476_HETEROGENEOUS_PROFILE_PREFLIGHT','status':'PASS','bugatti':{'massKg':a.mass_kg,'maxSpeedMps':a.max_speed_mps,'maxYawRateRadS':a.max_yaw_rate_rad_s},'bulldozer':{'massKg':z.mass_kg,'maxSpeedMps':z.max_speed_mps,'maxYawRateRadS':z.max_yaw_rate_rad_s}},sort_keys=True))
           PY
 
       - name: Install exact Blender 4.5.13
