@@ -95,22 +95,41 @@ def main() -> None:
     )
     assert no_physics is None
 
+    # Identity/provenance values must never enter the generic orientation code.
     for forbidden in (
         "bugatti", "bulldozer", "b06a715d", "2c0be359", "8ab94079",
-        "desiredImpactSpeed", "desiredImpactEnergy", "collisionFrame", "contactFrame",
-        "trajectoryPoints", "waypoints", "forcedWinner",
     ):
-        assert forbidden.lower() not in texts["helper"].lower(), forbidden
-        assert forbidden.lower() not in texts["wrapper"].lower(), forbidden
+        assert forbidden not in texts["helper"].lower(), forbidden
+        assert forbidden not in texts["wrapper"].lower(), forbidden
+
+    # Risky battle-control concepts are allowed only as explicit negative
+    # declarations in the C478 engineering manifest. The orientation helper
+    # itself must contain none of them.
+    for forbidden in (
+        "desiredimpactspeed", "desiredimpactenergy", "collisionframe", "contactframe",
+        "trajectorypoints", "waypoints", "forcedwinner",
+    ):
+        assert forbidden not in texts["helper"].lower(), forbidden
+
+    for required_false in (
+        '"perAssetOrientationOverride": False',
+        '"perAssetBattleCode": False',
+        '"perVideoTrajectoryEngineering": False',
+        '"damageThresholdAwareControl": False',
+        '"desiredImpactSpeedControl": False',
+        '"desiredImpactEnergyControl": False',
+        '"fixedWorldCoordinates": False',
+        '"exactCollisionFrameTarget": False',
+        '"actorPoseOrVelocityMutation": False',
+        '"contactThresholdChanged": False',
+        '"damageAdmissionThresholdChanged": False',
+    ):
+        assert required_false in texts["wrapper"], required_false
 
     assert "return _ORIGINAL_PARSE_FORWARD_AXIS(binding, imported)" in texts["wrapper"]
     assert "ACTOR_FORWARD_AXIS_UNRESOLVED:" in texts["wrapper"]
     assert "G04_FORWARD_AXIS_RESOLVED_FROM_PHYSICS_SEMANTICS" in texts["wrapper"]
     assert "candidate474.main()" in texts["wrapper"]
-    assert '"contactThresholdChanged": False' in texts["wrapper"]
-    assert '"damageAdmissionThresholdChanged": False' in texts["wrapper"]
-    assert '"perAssetBattleCode": False' in texts["wrapper"]
-    assert '"perAssetOrientationOverride": False' in texts["wrapper"]
 
     print(json.dumps({
         "marker": "GENERIC_AUTONOMOUS_BATTLE_C478_PROPERTY_ACCEPTANCE",
