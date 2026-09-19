@@ -98,6 +98,7 @@ def c488_goal_for_tactical(
     _contact_context[key] = {
         "frame": int(candidate487._current_frame(event)),
         "tacticalMode": str(tactical.mode),
+        "requiresContact": bool(event.requires_contact),
         "contactCommit": bool(tactical.contact_commit),
     }
     return goal
@@ -211,7 +212,9 @@ def certified_event_scoped_autonomy_update(
 
     tactical_mode = str(context.get("tacticalMode") or "")
     live_readiness = bool(context.get("contactCommit"))
-    directed = contact_directed(tactical_mode, bool(live_readiness))
+    # Intent persists during a temporary readiness miss. C491 may preserve an
+    # already-earned approach certificate; current handoff readiness stays false.
+    directed = contact_directed(tactical_mode, bool(context["requiresContact"]))
     recovery_active = is_recovery_mode(memory.mode)
     handoff_gap = float(ClosedLoopGoalController.contact_handoff_gap(obs))
     floor = float(
@@ -283,9 +286,13 @@ def certified_event_scoped_autonomy_update(
     )
 
     if action in {DEFER_TO_BASE, CONTINUE_APPROACH, RECOVERY_OWNS}:
+        # Delegation must not let the base proximity controller re-authorize a
+        # handoff rejected by this layer. This changes a control observation,
+        # never an actor pose/velocity or the original event's intent.
+        base_obs = obs if live_readiness else replace(obs, requires_contact=False)
         return _BASE_AUTONOMY_UPDATE(
             memory,
-            obs,
+            base_obs,
             recovery_bias=recovery_bias,
         )
 
